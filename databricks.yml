@@ -1,0 +1,42 @@
+# Databricks Asset Bundle Configuration for HEDIS Measure Ingestion Pipeline
+bundle:
+  name: hedis-measure-ingest
+
+variables:
+  catalog_name:
+    description: "Unity Catalog catalog name"
+    default: "main"
+
+  schema_name:
+    description: "Unity Catalog schema name"
+    default: "hedis_pipeline"
+
+  volume_name:
+    description: "Volume name for HEDIS PDFs"
+    default: "hedis"
+
+  model_endpoint:
+    description: "LLM model endpoint name"
+    default: "databricks-meta-llama-3-3-70b-instruct"
+
+  embedding_endpoint:
+    description: "Embedding model endpoint"
+    default: "databricks-bge-large-en"
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: ${DATABRICKS_HOST}
+    variables:
+      catalog_name: "dev_catalog"
+      schema_name: "hedis_pipeline_dev"
+
+  prod:
+    mode: production
+    workspace:
+      host: ${DATABRICKS_HOST}
+    variables:
+      catalog_name: "prod_catalog"
+      schema_name: "hedis_pipeline_prod"
