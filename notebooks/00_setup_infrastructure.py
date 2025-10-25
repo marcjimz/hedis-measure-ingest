@@ -29,16 +29,11 @@
 
 # COMMAND ----------
 
-# Configuration widgets
+# Configuration widgets - only resource names, no flags
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.dropdown("create_catalog", "no", ["yes", "no"], "Create Catalog?")
-dbutils.widgets.dropdown("create_schema", "yes", ["yes", "no"], "Create Schema?")
-dbutils.widgets.dropdown("create_volume", "yes", ["yes", "no"], "Create Volume?")
-dbutils.widgets.dropdown("create_vector_endpoint", "yes", ["yes", "no"], "Create Vector Search Endpoint?")
-dbutils.widgets.dropdown("create_tables", "yes", ["yes", "no"], "Create Delta Tables?")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
@@ -46,21 +41,15 @@ schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
 vector_endpoint_name = dbutils.widgets.get("vector_search_endpoint")
 
-# Flags
-create_catalog = dbutils.widgets.get("create_catalog") == "yes"
-create_schema = dbutils.widgets.get("create_schema") == "yes"
-create_volume = dbutils.widgets.get("create_volume") == "yes"
-create_vector_endpoint = dbutils.widgets.get("create_vector_endpoint") == "yes"
-create_tables = dbutils.widgets.get("create_tables") == "yes"
-
 # Display configuration
 print("🔧 Infrastructure Configuration:")
 print("=" * 60)
-print(f"Catalog:        {catalog_name} {'[CREATE]' if create_catalog else '[USE EXISTING]'}")
-print(f"Schema:         {schema_name} {'[CREATE]' if create_schema else '[USE EXISTING]'}")
-print(f"Volume:         {volume_name} {'[CREATE]' if create_volume else '[USE EXISTING]'}")
-print(f"Vector Endpoint: {vector_endpoint_name} {'[CREATE]' if create_vector_endpoint else '[USE EXISTING]'}")
-print(f"Tables:         {'[CREATE]' if create_tables else '[SKIP]'}")
+print(f"Catalog:         {catalog_name}")
+print(f"Schema:          {schema_name}")
+print(f"Volume:          {volume_name}")
+print(f"Vector Endpoint: {vector_endpoint_name}")
+print("=" * 60)
+print("\n💡 Infrastructure will be created only if it doesn't already exist")
 print("=" * 60)
 
 # COMMAND ----------
@@ -88,36 +77,34 @@ print(f"   Workspace: {w.config.host}")
 # MAGIC %md
 # MAGIC ## Step 1: Create Unity Catalog (if needed)
 # MAGIC
-# MAGIC **Note**: Creating a catalog requires high-level permissions (metastore admin). If you don't have permissions, set `Create Catalog?` to "no" and use an existing catalog.
+# MAGIC **Note**: Creating a catalog requires high-level permissions (metastore admin). If catalog already exists, it will be reused.
 
 # COMMAND ----------
 
-if create_catalog:
-    try:
-        print(f"🏗️  Creating catalog: {catalog_name}")
+print(f"🔍 Checking if catalog exists: {catalog_name}")
 
-        spark.sql(f"""
-            CREATE CATALOG IF NOT EXISTS {catalog_name}
-            COMMENT 'HEDIS Measure Ingestion Pipeline catalog'
-        """)
-
-        print(f"✅ Catalog created: {catalog_name}")
-
-    except Exception as e:
-        print(f"⚠️  Catalog creation failed: {str(e)}")
-        print("   Using existing catalog or insufficient permissions")
-else:
-    print(f"⏭️  Skipping catalog creation, using existing: {catalog_name}")
-
-# Verify catalog exists
+# Check if catalog exists
 try:
     catalogs = [c.name for c in spark.sql("SHOW CATALOGS").collect()]
-    if catalog_name in catalogs:
-        print(f"✅ Catalog verified: {catalog_name}")
+    catalog_exists = catalog_name in catalogs
+
+    if catalog_exists:
+        print(f"✅ Catalog already exists: {catalog_name}")
     else:
-        raise ValueError(f"Catalog '{catalog_name}' does not exist")
+        print(f"🏗️  Catalog not found, creating: {catalog_name}")
+        try:
+            spark.sql(f"""
+                CREATE CATALOG {catalog_name}
+                COMMENT 'HEDIS Measure Ingestion Pipeline catalog'
+            """)
+            print(f"✅ Catalog created: {catalog_name}")
+        except Exception as e:
+            print(f"❌ Catalog creation failed: {str(e)}")
+            print("   You may need metastore admin permissions or use an existing catalog")
+            raise
+
 except Exception as e:
-    print(f"❌ Catalog verification failed: {str(e)}")
+    print(f"❌ Error checking/creating catalog: {str(e)}")
     raise
 
 # COMMAND ----------
@@ -127,22 +114,26 @@ except Exception as e:
 
 # COMMAND ----------
 
-if create_schema:
-    try:
-        print(f"🏗️  Creating schema: {catalog_name}.{schema_name}")
+print(f"🔍 Checking if schema exists: {catalog_name}.{schema_name}")
 
+# Check if schema exists
+try:
+    schemas = [s.databaseName for s in spark.sql(f"SHOW SCHEMAS IN {catalog_name}").collect()]
+    schema_exists = schema_name in schemas
+
+    if schema_exists:
+        print(f"✅ Schema already exists: {catalog_name}.{schema_name}")
+    else:
+        print(f"🏗️  Schema not found, creating: {catalog_name}.{schema_name}")
         spark.sql(f"""
-            CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}
+            CREATE SCHEMA {catalog_name}.{schema_name}
             COMMENT 'HEDIS pipeline tables and volumes'
         """)
-
         print(f"✅ Schema created: {catalog_name}.{schema_name}")
 
-    except Exception as e:
-        print(f"❌ Schema creation failed: {str(e)}")
-        raise
-else:
-    print(f"⏭️  Skipping schema creation, using existing: {catalog_name}.{schema_name}")
+except Exception as e:
+    print(f"❌ Error checking/creating schema: {str(e)}")
+    raise
 
 # Set default catalog and schema
 spark.sql(f"USE CATALOG {catalog_name}")
@@ -157,16 +148,23 @@ print(f"✅ Set default catalog/schema: {catalog_name}.{schema_name}")
 
 # COMMAND ----------
 
-if create_volume:
-    try:
-        print(f"🏗️  Creating volume: {catalog_name}.{schema_name}.{volume_name}")
+volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
+print(f"🔍 Checking if volume exists: {catalog_name}.{schema_name}.{volume_name}")
 
+# Check if volume exists by trying to list it
+try:
+    # Try to list the volume path - if it succeeds, volume exists
+    dbutils.fs.ls(volume_path)
+    print(f"✅ Volume already exists: {volume_path}")
+
+except Exception:
+    # Volume doesn't exist, create it
+    print(f"🏗️  Volume not found, creating: {catalog_name}.{schema_name}.{volume_name}")
+    try:
         spark.sql(f"""
-            CREATE VOLUME IF NOT EXISTS {catalog_name}.{schema_name}.{volume_name}
+            CREATE VOLUME {catalog_name}.{schema_name}.{volume_name}
             COMMENT 'Storage for HEDIS PDF documents'
         """)
-
-        volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
         print(f"✅ Volume created: {volume_path}")
 
         # Display volume info
@@ -178,11 +176,8 @@ if create_volume:
     except Exception as e:
         print(f"❌ Volume creation failed: {str(e)}")
         raise
-else:
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-    print(f"⏭️  Skipping volume creation, using existing: {volume_path}")
 
-# Verify volume is accessible
+# Verify volume is accessible and show file count
 try:
     files = dbutils.fs.ls(volume_path)
     print(f"✅ Volume verified and accessible: {volume_path}")
@@ -199,66 +194,65 @@ except Exception as e:
 
 # COMMAND ----------
 
-if create_vector_endpoint:
+print(f"🔍 Checking if Vector Search endpoint exists: {vector_endpoint_name}")
+
+# Check if endpoint already exists
+try:
+    existing_endpoint = vsc.get_endpoint(vector_endpoint_name)
+    endpoint_state = existing_endpoint.get('endpoint_status', {}).get('state', 'Unknown')
+    print(f"✅ Endpoint already exists: {vector_endpoint_name}")
+    print(f"   Status: {endpoint_state}")
+
+    if endpoint_state != "ONLINE":
+        print(f"⚠️  Endpoint is not online yet. Current state: {endpoint_state}")
+        print("   It may still be provisioning. Check back in a few minutes.")
+
+except Exception:
+    # Endpoint doesn't exist, create it
+    print(f"🏗️  Endpoint not found, creating: {vector_endpoint_name}")
+    print("   ⏳ This may take 5-10 minutes...")
+
     try:
-        print(f"🏗️  Creating Vector Search endpoint: {vector_endpoint_name}")
-        print("   ⏳ This may take 5-10 minutes...")
+        vsc.create_endpoint(
+            name=vector_endpoint_name,
+            endpoint_type="STANDARD"
+        )
 
-        # Check if endpoint already exists
-        try:
-            existing_endpoint = vsc.get_endpoint(vector_endpoint_name)
-            print(f"✅ Endpoint already exists: {vector_endpoint_name}")
-            print(f"   Status: {existing_endpoint.get('endpoint_status', {}).get('state', 'Unknown')}")
-        except Exception:
-            # Endpoint doesn't exist, create it
-            vsc.create_endpoint(
-                name=vector_endpoint_name,
-                endpoint_type="STANDARD"
-            )
+        print(f"✅ Endpoint creation initiated: {vector_endpoint_name}")
+        print("   Waiting for endpoint to come online...")
 
-            print(f"✅ Endpoint creation initiated: {vector_endpoint_name}")
-            print("   Waiting for endpoint to come online...")
+        # Wait for endpoint to be ready
+        max_wait = 600  # 10 minutes
+        start_time = time.time()
 
-            # Wait for endpoint to be ready
-            max_wait = 600  # 10 minutes
-            start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                endpoint = vsc.get_endpoint(vector_endpoint_name)
+                state = endpoint.get('endpoint_status', {}).get('state', 'Unknown')
 
-            while time.time() - start_time < max_wait:
-                try:
-                    endpoint = vsc.get_endpoint(vector_endpoint_name)
-                    state = endpoint.get('endpoint_status', {}).get('state', 'Unknown')
+                elapsed = int(time.time() - start_time)
+                print(f"   Status: {state} (elapsed: {elapsed}s)")
 
-                    print(f"   Status: {state}")
-
-                    if state == "ONLINE":
-                        print(f"✅ Endpoint is online: {vector_endpoint_name}")
-                        break
-                    elif state in ["OFFLINE", "PROVISIONING"]:
-                        time.sleep(30)  # Check every 30 seconds
-                    else:
-                        print(f"⚠️  Unexpected state: {state}")
-                        break
-                except Exception as e:
-                    print(f"   Waiting... ({int(time.time() - start_time)}s)")
-                    time.sleep(30)
-            else:
-                print("⚠️  Endpoint creation timed out, but it may still be provisioning")
-                print("   Check status with: vsc.get_endpoint('{vector_endpoint_name}')")
+                if state == "ONLINE":
+                    print(f"✅ Endpoint is online: {vector_endpoint_name}")
+                    break
+                elif state in ["OFFLINE", "PROVISIONING"]:
+                    time.sleep(30)  # Check every 30 seconds
+                else:
+                    print(f"⚠️  Unexpected state: {state}")
+                    break
+            except Exception as e:
+                elapsed = int(time.time() - start_time)
+                print(f"   Waiting... ({elapsed}s)")
+                time.sleep(30)
+        else:
+            print("⚠️  Endpoint creation timed out (10 minutes), but it may still be provisioning")
+            print(f"   Check status with: vsc.get_endpoint('{vector_endpoint_name}')")
 
     except Exception as e:
         print(f"❌ Vector Search endpoint creation failed: {str(e)}")
-        print("   You can create it manually or skip vector search integration")
-else:
-    print(f"⏭️  Skipping Vector Search endpoint creation")
-
-    # Check if endpoint exists
-    try:
-        endpoint = vsc.get_endpoint(vector_endpoint_name)
-        state = endpoint.get('endpoint_status', {}).get('state', 'Unknown')
-        print(f"✅ Using existing endpoint: {vector_endpoint_name} (Status: {state})")
-    except Exception as e:
-        print(f"⚠️  Warning: Endpoint '{vector_endpoint_name}' not found: {str(e)}")
-        print("   Vector search will not work until endpoint is created")
+        print("   You can create it manually later or skip vector search integration")
+        print("   Continuing with setup...")
 
 # COMMAND ----------
 
@@ -272,13 +266,21 @@ else:
 
 # COMMAND ----------
 
-if create_tables:
-    print("🏗️  Creating Delta tables...")
+print("🔍 Checking and creating Delta tables...")
 
-    # Table 1: Bronze - File Metadata
-    print("\n1️⃣  Creating bronze table: hedis_file_metadata")
+# Get existing tables
+existing_tables = [t.tableName for t in spark.sql(f"SHOW TABLES IN {catalog_name}.{schema_name}").collect()]
+
+# Table 1: Bronze - File Metadata
+table_name = "hedis_file_metadata"
+print(f"\n1️⃣  Checking bronze table: {table_name}")
+
+if table_name in existing_tables:
+    print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
+else:
+    print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {catalog_name}.{schema_name}.hedis_file_metadata (
+        CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
             file_id STRING NOT NULL COMMENT 'Unique file identifier (UUID)',
             file_name STRING NOT NULL COMMENT 'Original filename',
             file_path STRING NOT NULL COMMENT 'Full volume path',
@@ -295,12 +297,18 @@ if create_tables:
         USING DELTA
         COMMENT 'Bronze layer: HEDIS file metadata catalog'
     """)
-    print("   ✅ Bronze table created")
+    print(f"   ✅ Table created: {table_name}")
 
-    # Table 2: Silver - Measure Definitions
-    print("\n2️⃣  Creating silver table: hedis_measures_definitions")
+# Table 2: Silver - Measure Definitions
+table_name = "hedis_measures_definitions"
+print(f"\n2️⃣  Checking silver table: {table_name}")
+
+if table_name in existing_tables:
+    print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
+else:
+    print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {catalog_name}.{schema_name}.hedis_measures_definitions (
+        CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
             measure_id STRING NOT NULL COMMENT 'Unique measure identifier',
             file_id STRING NOT NULL COMMENT 'Foreign key to bronze table',
             specifications STRING NOT NULL COMMENT 'Official measure description from NCQA',
@@ -320,12 +328,18 @@ if create_tables:
         COMMENT 'Silver layer: Structured HEDIS measure definitions'
         PARTITIONED BY (effective_year)
     """)
-    print("   ✅ Silver definitions table created")
+    print(f"   ✅ Table created: {table_name}")
 
-    # Table 3: Silver - Chunks for Vector Search
-    print("\n3️⃣  Creating silver table: hedis_measures_chunks")
+# Table 3: Silver - Chunks for Vector Search
+table_name = "hedis_measures_chunks"
+print(f"\n3️⃣  Checking silver table: {table_name}")
+
+if table_name in existing_tables:
+    print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
+else:
+    print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {catalog_name}.{schema_name}.hedis_measures_chunks (
+        CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
             chunk_id STRING NOT NULL COMMENT 'Unique chunk identifier',
             file_id STRING NOT NULL COMMENT 'Foreign key to bronze table',
             measure_name STRING COMMENT 'Associated measure name if available',
@@ -345,12 +359,9 @@ if create_tables:
         COMMENT 'Silver layer: Text chunks for vector search'
         PARTITIONED BY (effective_year)
     """)
-    print("   ✅ Silver chunks table created")
+    print(f"   ✅ Table created: {table_name}")
 
-    print("\n✅ All Delta tables created successfully")
-
-else:
-    print("⏭️  Skipping table creation")
+print("\n✅ All Delta tables verified/created successfully")
 
 # COMMAND ----------
 
