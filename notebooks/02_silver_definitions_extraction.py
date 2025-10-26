@@ -115,36 +115,14 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
-sample_path
-
-# COMMAND ----------
-
-sample_file[0]
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SHOW VOLUMES
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT
-# MAGIC ai_parse_document(
-# MAGIC   content,
-# MAGIC   map('version', '2.0')
-# MAGIC ) AS parsed
-# MAGIC FROM READ_FILES('/Volumes/marcin_demo/hedis_measurements/hedis/*.{pdf}', format => 'binaryFile');
-
-# COMMAND ----------
-
-sample_directory
+# MAGIC %md
+# MAGIC **NOTE**: if using serverless, make sure you are environment version `4 - Python 3.12, Scala 2.13`
 
 # COMMAND ----------
 
 import os
 
-# Get a sample file path from bronze table
+# Get a sample file path from bronze table (or specify directly)
 sample_file = spark.sql(f"""
     SELECT file_path, file_name
     FROM {bronze_table}
@@ -153,47 +131,47 @@ sample_file = spark.sql(f"""
 
 if sample_file:
     sample_path = sample_file[0].file_path
-    sample_directory = os.path.dirname(sample_path)
     sample_name = sample_file[0].file_name
-
+    
     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
     print(f"   Path: {sample_path}")
 
-    # Use ai_parse_document SQL function directly
+    # Build the map parameters
+    parse_params = {
+        'version': '2.0'
+    }
+    
+    # Convert dict to map string for SQL
+    map_params = ', '.join([f"'{k}', '{v}'" for k, v in parse_params.items()])
+    
+    # Use ai_parse_document SQL function
     parsed_result = spark.sql(f"""
-        SELECT
-            path,
-            ai_parse_document(content, map('version', '2.0')) as parsed_doc
-        FROM READ_FILES('{sample_directory}', format => 'binaryFile');
-    """).first()
+        WITH parsed_documents AS (
+            SELECT
+                path,
+                ai_parse_document(
+                    content,
+                    map({map_params})
+                ) as parsed_doc
+            FROM read_files('{sample_path}', format => 'binaryFile')
+        )
+        SELECT * FROM parsed_documents
+    """)
 
-    parsed_doc = parsed_result.parsed_doc
-    document = parsed_doc.get('document', {})
-
-    # Display structure
-    print(f"\n📊 Parsed Document Structure:")
-    print(f"   Pages: {len(document.get('pages', []))}")
-    print(f"   Elements: {len(document.get('elements', []))}")
-
-    # Show element type breakdown
-    elements = document.get('elements', [])
-    if elements:
-        element_types = {}
-        for elem in elements[:100]:  # Sample first 100 elements
-            elem_type = elem.get('type', 'unknown')
-            element_types[elem_type] = element_types.get(elem_type, 0) + 1
-
-        print(f"\n   Element Types (first 100):")
-        for elem_type, count in sorted(element_types.items(), key=lambda x: x[1], reverse=True):
-            print(f"     • {elem_type}: {count}")
-
-        # Show a sample table element if exists
-        tables = [e for e in elements if e.get('type') == 'table']
-        if tables:
-            print(f"\n   Sample Table (HTML format):")
-            print(f"     {tables[0].get('content', '')[:150]}...")
+    parsed_results = [row.parsed for row in parsed_result.collect()]
 else:
     print("⚠️  No files in bronze table yet - run bronze ingestion first")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC You can use the below to review the extraction task and see how the SQL function behaved on the extraction.
+
+# COMMAND ----------
+
+# Visualize the extracted results
+from src.document_renderer import DocumentRenderer
+DocumentRenderer.render_ai_parse_output_interactive(parsed_results)
 
 # COMMAND ----------
 
