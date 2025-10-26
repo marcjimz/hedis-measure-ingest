@@ -39,6 +39,7 @@ dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
 dbutils.widgets.text("model_endpoint", "databricks-meta-llama-3-3-70b-instruct", "LLM Model Endpoint")
 dbutils.widgets.text("effective_year", "2025", "Effective Year")
 dbutils.widgets.text("batch_size", "10", "Batch Size")
+dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
@@ -46,6 +47,7 @@ schema_name = dbutils.widgets.get("schema_name")
 model_endpoint = dbutils.widgets.get("model_endpoint")
 effective_year = int(dbutils.widgets.get("effective_year"))
 batch_size = int(dbutils.widgets.get("batch_size"))
+processing_mode = dbutils.widgets.get("processing_mode")
 
 # Table names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
@@ -56,6 +58,8 @@ print(f"   Bronze Table: {bronze_table}")
 print(f"   Silver Table: {silver_table}")
 print(f"   LLM Endpoint: {model_endpoint}")
 print(f"   Effective Year: {effective_year}")
+print(f"   Processing Mode: {processing_mode}")
+print(f"   Batch Size: {batch_size}")
 
 # COMMAND ----------
 
@@ -201,22 +205,72 @@ print(f"✅ Silver table created/verified: {silver_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Load Pending Files from Bronze
+# MAGIC ## Select Files to Process (Idempotent)
+# MAGIC
+# MAGIC Two processing modes:
+# MAGIC - **Incremental**: Uses Change Data Feed to process only new/changed files
+# MAGIC - **Full Refresh**: Reprocesses all files (uses MERGE for idempotency)
 
 # COMMAND ----------
 
-pending_files = spark.sql(f"""
-    SELECT *
-    FROM {bronze_table}
-    WHERE processing_status = 'pending'
-    AND effective_year = {effective_year}
-    ORDER BY ingestion_timestamp DESC
-    LIMIT {batch_size}
-""").collect()
+if processing_mode == "incremental":
+    print(f"📊 Incremental mode: Using Change Data Feed to detect new files")
 
-print(f"📁 Found {len(pending_files)} pending files to process")
-for f in pending_files:
-    print(f"   - {f.file_name} ({f.page_count} pages)")
+    # Get last processed version from silver table (or 0 if first run)
+    try:
+        last_version = spark.sql(f"""
+            SELECT MAX(_commit_version) as max_version
+            FROM table_changes('{bronze_table}', 0)
+            WHERE file_id IN (SELECT DISTINCT file_id FROM {silver_table})
+        """).first()["max_version"]
+
+        if last_version is None:
+            last_version = 0
+            print(f"   First run detected, starting from version 0")
+        else:
+            print(f"   Last processed version: {last_version}")
+    except:
+        last_version = 0
+        print(f"   No prior processing detected, starting from version 0")
+
+    # Get new files from CDF
+    files_to_process = spark.sql(f"""
+        SELECT DISTINCT b.*
+        FROM table_changes('{bronze_table}', {last_version}) cdf
+        INNER JOIN {bronze_table} b ON cdf.file_id = b.file_id
+        WHERE cdf._change_type IN ('insert', 'update_postimage')
+        AND b.effective_year = {effective_year}
+        ORDER BY b.ingestion_timestamp DESC
+        LIMIT {batch_size}
+    """).collect()
+
+    print(f"   📁 Found {len(files_to_process)} new/updated files since version {last_version}")
+
+else:  # full_refresh
+    print(f"🔄 Full refresh mode: Processing all files (idempotent with MERGE)")
+
+    # Get files not yet processed (compare bronze vs silver)
+    files_to_process = spark.sql(f"""
+        SELECT b.*
+        FROM {bronze_table} b
+        LEFT JOIN (
+            SELECT DISTINCT file_id
+            FROM {silver_table}
+        ) s ON b.file_id = s.file_id
+        WHERE b.effective_year = {effective_year}
+        AND s.file_id IS NULL
+        ORDER BY b.ingestion_timestamp DESC
+        LIMIT {batch_size}
+    """).collect()
+
+    print(f"   📁 Found {len(files_to_process)} unprocessed files")
+
+# Display files
+if files_to_process:
+    for f in files_to_process:
+        print(f"   - {f.file_name} ({f.page_count} pages)")
+else:
+    print("   ✅ No new files to process")
 
 # COMMAND ----------
 
@@ -227,17 +281,9 @@ for f in pending_files:
 
 all_measures = []
 
-for file_row in tqdm(pending_files, desc="Processing files"):
+for file_row in tqdm(files_to_process, desc="Processing files"):
     try:
         print(f"\n📄 Processing: {file_row.file_name}")
-
-        # Mark as processing
-        spark.sql(f"""
-            UPDATE {bronze_table}
-            SET processing_status = 'processing',
-                last_modified = CURRENT_TIMESTAMP()
-            WHERE file_id = '{file_row.file_id}'
-        """)
 
         # Read PDF
         pdf_bytes = pdf_processor.read_pdf_from_volume(file_row.file_path)
@@ -296,33 +342,17 @@ for file_row in tqdm(pending_files, desc="Processing files"):
             except Exception as e:
                 print(f"      ❌ Failed to extract {entry.get('measure_name', 'Unknown')}: {str(e)}")
 
-        # Mark as completed
-        spark.sql(f"""
-            UPDATE {bronze_table}
-            SET processing_status = 'completed',
-                last_modified = CURRENT_TIMESTAMP()
-            WHERE file_id = '{file_row.file_id}'
-        """)
-
         print(f"✅ Completed: {file_row.file_name}")
 
     except Exception as e:
         print(f"❌ Failed to process file: {str(e)}")
-
-        # Mark as failed
-        spark.sql(f"""
-            UPDATE {bronze_table}
-            SET processing_status = 'failed',
-                last_modified = CURRENT_TIMESTAMP()
-            WHERE file_id = '{file_row.file_id}'
-        """)
 
 print(f"\n📊 Extracted {len(all_measures)} measures total")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write to Silver Table
+# MAGIC ## Write to Silver Table (Idempotent MERGE)
 
 # COMMAND ----------
 
@@ -330,10 +360,25 @@ if all_measures:
     # Create DataFrame
     measures_df = spark.createDataFrame(all_measures)
 
-    # Write to silver table (append)
-    measures_df.write.mode("append").saveAsTable(silver_table)
+    # Create temp view for merge
+    measures_df.createOrReplaceTempView("new_measures")
 
-    print(f"✅ Wrote {len(all_measures)} measures to silver table")
+    # MERGE to make idempotent - upsert based on file_id + measure name
+    spark.sql(f"""
+        MERGE INTO {silver_table} target
+        USING new_measures source
+        ON target.file_id = source.file_id
+           AND target.measure = source.measure
+           AND target.page_start = source.page_start
+        WHEN MATCHED THEN
+            UPDATE SET *
+        WHEN NOT MATCHED THEN
+            INSERT *
+    """)
+
+    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
+    print(f"✅ Wrote {len(all_measures)} measures to silver table (MERGE)")
+    print(f"   Total measures in table: {result_count}")
 
     # Display sample
     display(spark.table(silver_table).orderBy(F.desc("extraction_timestamp")).limit(10))

@@ -39,6 +39,7 @@ dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
 dbutils.widgets.text("chunk_size", "1536", "Chunk Size (tokens)")
 dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
 dbutils.widgets.text("effective_year", "2025", "Effective Year")
+dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
@@ -46,6 +47,7 @@ schema_name = dbutils.widgets.get("schema_name")
 chunk_size = int(dbutils.widgets.get("chunk_size"))
 overlap_percent = float(dbutils.widgets.get("overlap_percent"))
 effective_year = int(dbutils.widgets.get("effective_year"))
+processing_mode = dbutils.widgets.get("processing_mode")
 
 # Table names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
@@ -56,6 +58,7 @@ print(f"   Bronze Table: {bronze_table}")
 print(f"   Silver Table: {silver_table}")
 print(f"   Chunk Size: {chunk_size} tokens")
 print(f"   Overlap: {overlap_percent * 100}%")
+print(f"   Processing Mode: {processing_mode}")
 
 # COMMAND ----------
 
@@ -144,21 +147,70 @@ print(f"✅ Silver chunks table created/verified: {silver_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Load Completed Files from Bronze
+# MAGIC ## Select Files to Process (Idempotent)
+# MAGIC
+# MAGIC Two processing modes:
+# MAGIC - **Incremental**: Uses Change Data Feed to process only new/changed files
+# MAGIC - **Full Refresh**: Reprocesses all files (uses MERGE for idempotency)
 
 # COMMAND ----------
 
-completed_files = spark.sql(f"""
-    SELECT *
-    FROM {bronze_table}
-    WHERE processing_status = 'completed'
-    AND effective_year = {effective_year}
-    ORDER BY ingestion_timestamp DESC
-""").collect()
+if processing_mode == "incremental":
+    print(f"📊 Incremental mode: Using Change Data Feed to detect new files")
 
-print(f"📁 Found {len(completed_files)} completed files to chunk")
-for f in completed_files:
-    print(f"   - {f.file_name} ({f.page_count} pages)")
+    # Get last processed version from silver table (or 0 if first run)
+    try:
+        last_version = spark.sql(f"""
+            SELECT MAX(_commit_version) as max_version
+            FROM table_changes('{bronze_table}', 0)
+            WHERE file_id IN (SELECT DISTINCT file_id FROM {silver_table})
+        """).first()["max_version"]
+
+        if last_version is None:
+            last_version = 0
+            print(f"   First run detected, starting from version 0")
+        else:
+            print(f"   Last processed version: {last_version}")
+    except:
+        last_version = 0
+        print(f"   No prior processing detected, starting from version 0")
+
+    # Get new files from CDF
+    files_to_process = spark.sql(f"""
+        SELECT DISTINCT b.*
+        FROM table_changes('{bronze_table}', {last_version}) cdf
+        INNER JOIN {bronze_table} b ON cdf.file_id = b.file_id
+        WHERE cdf._change_type IN ('insert', 'update_postimage')
+        AND b.effective_year = {effective_year}
+        ORDER BY b.ingestion_timestamp DESC
+    """).collect()
+
+    print(f"   📁 Found {len(files_to_process)} new/updated files since version {last_version}")
+
+else:  # full_refresh
+    print(f"🔄 Full refresh mode: Processing all files (idempotent with MERGE)")
+
+    # Get files not yet processed (compare bronze vs silver)
+    files_to_process = spark.sql(f"""
+        SELECT b.*
+        FROM {bronze_table} b
+        LEFT JOIN (
+            SELECT DISTINCT file_id
+            FROM {silver_table}
+        ) s ON b.file_id = s.file_id
+        WHERE b.effective_year = {effective_year}
+        AND s.file_id IS NULL
+        ORDER BY b.ingestion_timestamp DESC
+    """).collect()
+
+    print(f"   📁 Found {len(files_to_process)} unprocessed files")
+
+# Display files
+if files_to_process:
+    for f in files_to_process:
+        print(f"   - {f.file_name} ({f.page_count} pages)")
+else:
+    print("   ✅ No new files to process")
 
 # COMMAND ----------
 
@@ -169,7 +221,7 @@ for f in completed_files:
 
 all_chunks = []
 
-for file_row in tqdm(completed_files, desc="Chunking files"):
+for file_row in tqdm(files_to_process, desc="Chunking files"):
     try:
         print(f"\n📄 Chunking: {file_row.file_name}")
 
@@ -234,7 +286,7 @@ print(f"\n📊 Generated {len(all_chunks)} total chunks")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write to Silver Chunks Table
+# MAGIC ## Write to Silver Chunks Table (Idempotent)
 
 # COMMAND ----------
 
@@ -242,10 +294,24 @@ if all_chunks:
     # Create DataFrame
     chunks_df = spark.createDataFrame(all_chunks)
 
-    # Write to silver table (append)
+    # Get unique file_ids being processed
+    file_ids_processed = list(set([c["file_id"] for c in all_chunks]))
+
+    # DELETE existing chunks for these files (idempotent reprocessing)
+    if file_ids_processed:
+        file_ids_str = "', '".join(file_ids_processed)
+        spark.sql(f"""
+            DELETE FROM {silver_table}
+            WHERE file_id IN ('{file_ids_str}')
+        """)
+        print(f"   Removed existing chunks for {len(file_ids_processed)} files")
+
+    # INSERT new chunks
     chunks_df.write.mode("append").saveAsTable(silver_table)
 
-    print(f"✅ Wrote {len(all_chunks)} chunks to silver table")
+    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
+    print(f"✅ Wrote {len(all_chunks)} chunks to silver table (DELETE+INSERT)")
+    print(f"   Total chunks in table: {result_count}")
 
     # Display sample
     display(spark.table(silver_table).orderBy(F.desc("chunk_timestamp")).limit(10))

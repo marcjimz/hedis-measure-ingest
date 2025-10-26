@@ -284,6 +284,16 @@ print(f"\n1️⃣  Checking bronze table: {table_name}")
 
 if table_name in existing_tables:
     print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
+    # Enable CDF if not already enabled
+    try:
+        spark.sql(f"""
+            ALTER TABLE {catalog_name}.{schema_name}.{table_name}
+            SET TBLPROPERTIES (delta.enableChangeDataFeed = true)
+        """)
+        print(f"   📝 Change Data Feed enabled for incremental processing")
+    except Exception as e:
+        if "already set" not in str(e).lower():
+            print(f"   ⚠️  Could not enable CDF: {str(e)}")
 else:
     print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
     spark.sql(f"""
@@ -296,15 +306,16 @@ else:
             effective_year INT COMMENT 'HEDIS year (e.g., 2025)',
             file_size_bytes LONG COMMENT 'File size in bytes',
             page_count INT COMMENT 'Total pages in PDF',
-            processing_status STRING COMMENT 'pending/processing/completed/failed',
             ingestion_timestamp TIMESTAMP COMMENT 'Pipeline ingestion time',
             last_modified TIMESTAMP COMMENT 'Last update timestamp',
             checksum STRING COMMENT 'SHA256 hash for deduplication'
         )
         USING DELTA
         COMMENT 'Bronze layer: HEDIS file metadata catalog'
+        TBLPROPERTIES (delta.enableChangeDataFeed = true)
     """)
     print(f"   ✅ Table created: {table_name}")
+    print(f"   📝 Change Data Feed enabled for incremental processing")
 
 # Table 2: Silver - Measure Definitions
 table_name = "hedis_measures_definitions"
