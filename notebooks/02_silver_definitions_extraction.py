@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Definitions Extraction
 # MAGIC
-# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using Databricks `ai_parse_document` and LLM-based extraction.
+# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using Databricks `ai_parse_document` and `ai_query` SQL functions.
 # MAGIC
 # MAGIC **Module**: Silver Definitions (Step 2 of 3)
 # MAGIC
@@ -15,8 +15,10 @@
 # MAGIC **Features**:
 # MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
 # MAGIC - Table of Contents parsing for measure boundaries
-# MAGIC - LLM-based structured extraction (Llama 3.3 70B)
-# MAGIC - Validation and error handling
+# MAGIC - SQL-based structured extraction with `ai_query`
+# MAGIC - Idempotent writes with MERGE
+# MAGIC
+# MAGIC **Future Enhancement**: Consider using Delta Change Data Feed (CDF) to process only new/updated files incrementally. Enable CDF on bronze table with `TBLPROPERTIES (delta.enableChangeDataFeed = true)` and use `table_changes()` function to track changes.
 
 # COMMAND ----------
 
@@ -36,27 +38,25 @@ dbutils.library.restartPython()
 # Widgets
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
+dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("model_endpoint", "databricks-claude-sonnet-4-5", "LLM Model Endpoint")
-dbutils.widgets.text("batch_size", "10", "Batch Size")
-dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
+volume_name = dbutils.widgets.get("volume_name")
 model_endpoint = dbutils.widgets.get("model_endpoint")
-batch_size = int(dbutils.widgets.get("batch_size"))
-processing_mode = dbutils.widgets.get("processing_mode")
 
 # Table names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
 silver_table = f"{catalog_name}.{schema_name}.hedis_measures_definitions"
+volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 
 print(f"📋 Configuration:")
 print(f"   Bronze Table: {bronze_table}")
 print(f"   Silver Table: {silver_table}")
+print(f"   Volume Path: {volume_path}")
 print(f"   LLM Endpoint: {model_endpoint}")
-print(f"   Processing Mode: {processing_mode}")
-print(f"   Batch Size: {batch_size}")
 
 # COMMAND ----------
 
@@ -65,30 +65,12 @@ print(f"   Batch Size: {batch_size}")
 
 # COMMAND ----------
 
-import sys
-sys.path.append("../src")
-
-from pyspark.sql.types import *
 from pyspark.sql import functions as F
-from databricks.sdk import WorkspaceClient
-import uuid
 from datetime import datetime
-from tqdm import tqdm
-
-# Initialize
-w = WorkspaceClient()
 
 # Set catalog/schema
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE SCHEMA {schema_name}")
-
-# Import modules
-from extraction.ai_pdf_processor import AIPDFProcessor
-from extraction.llm_extractor import LLMExtractor
-
-# Initialize processors
-pdf_processor = AIPDFProcessor(spark=spark, workspace_client=w)
-llm_extractor = LLMExtractor(model_endpoint=model_endpoint, temperature=0.0)
 
 print("✅ Environment initialized")
 
@@ -102,8 +84,19 @@ print("✅ Environment initialized")
 # MAGIC
 # MAGIC **Basic SQL usage:**
 # MAGIC ```sql
-# MAGIC SELECT ai_parse_document(content, map('version', '2.0')) as parsed_doc
-# MAGIC FROM read_files('/Volumes/catalog/schema/volume/file.pdf', format => 'binaryFile')
+# MAGIC WITH parsed_documents AS (
+# MAGIC   SELECT
+# MAGIC     path,
+# MAGIC     ai_parse_document(
+# MAGIC       content,
+# MAGIC       map(
+# MAGIC         'imageOutputPath', '/Volumes/catalog/schema/volume/parsed_images/',
+# MAGIC         'descriptionElementTypes', '*'
+# MAGIC       )
+# MAGIC     ) AS parsed
+# MAGIC   FROM READ_FILES('/Volumes/catalog/schema/volume/*.pdf', format => 'binaryFile')
+# MAGIC )
+# MAGIC SELECT * FROM parsed_documents WHERE try_cast(parsed:error_status AS STRING) IS NULL;
 # MAGIC ```
 # MAGIC
 # MAGIC The demo below shows the function in action with a sample HEDIS file.
@@ -120,9 +113,7 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
-import os
-
-# Get a sample file path from bronze table (or specify directly)
+# Get a sample file path from bronze table
 sample_file = spark.sql(f"""
     SELECT file_path, file_name
     FROM {bronze_table}
@@ -132,46 +123,61 @@ sample_file = spark.sql(f"""
 if sample_file:
     sample_path = sample_file[0].file_path
     sample_name = sample_file[0].file_name
-    
+
     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
     print(f"   Path: {sample_path}")
 
-    # Build the map parameters
-    parse_params = {
-        'version': '2.0'
-    }
-    
-    # Convert dict to map string for SQL
-    map_params = ', '.join([f"'{k}', '{v}'" for k, v in parse_params.items()])
-    
-    # Use ai_parse_document SQL function
-    sql = f"""
+    # Use ai_parse_document SQL function with CTE pattern
+    parsed_result = spark.sql(f"""
         WITH parsed_documents AS (
             SELECT
                 path,
                 ai_parse_document(
                     content,
-                    map({map_params})
-                ) as parsed_doc
+                    map(
+                        'version', '2.0',
+                        'imageOutputPath', '{volume_path}/parsed_images/',
+                        'descriptionElementTypes', '*'
+                    )
+                ) as parsed
             FROM read_files('{sample_path}', format => 'binaryFile')
         )
-        SELECT * FROM parsed_documents
-    """
+        SELECT
+            path,
+            parsed,
+            try_cast(parsed:error_status AS STRING) as error_status
+        FROM parsed_documents
+    """)
 
-    parsed_results = [row.parsed for row in spark.sql(sql).collect()]
+    # Display structure
+    result = parsed_result.first()
+    if result:
+        parsed_doc = result.parsed
+        if parsed_doc:
+            print(f"\n📊 Parsed Document Structure:")
+            print(f"   Error Status: {result.error_status or 'None'}")
+
+            # Access nested fields
+            doc_info = spark.sql(f"""
+                WITH parsed_documents AS (
+                    SELECT
+                        path,
+                        ai_parse_document(
+                            content,
+                            map('version', '2.0')
+                        ) as parsed
+                    FROM read_files('{sample_path}', format => 'binaryFile')
+                )
+                SELECT
+                    size(try_cast(parsed:document:pages AS ARRAY<VARIANT>)) as page_count,
+                    size(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) as element_count
+                FROM parsed_documents
+            """).first()
+
+            print(f"   Pages: {doc_info.page_count}")
+            print(f"   Elements: {doc_info.element_count}")
 else:
     print("⚠️  No files in bronze table yet - run bronze ingestion first")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC You can use the below to review the extraction task and see how the SQL function behaved on the extraction.
-
-# COMMAND ----------
-
-# Visualize the extracted results
-from src.document_renderer import DocumentRenderer
-DocumentRenderer.render_ai_parse_output_interactive(parsed_results)
 
 # COMMAND ----------
 
@@ -184,21 +190,22 @@ spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {silver_table} (
         measure_id STRING NOT NULL,
         file_id STRING NOT NULL,
-        specifications STRING NOT NULL,
-        measure STRING NOT NULL,
-        initial_pop STRING,
-        denominator ARRAY<STRING>,
-        numerator ARRAY<STRING>,
-        exclusion ARRAY<STRING>,
-        effective_year INT NOT NULL,
+        file_name STRING,
+        measure_acronym STRING,
+        measure_name STRING NOT NULL,
         page_start INT,
         page_end INT,
+        specifications STRING,
+        denominator STRING,
+        numerator STRING,
+        exclusions STRING,
+        effective_year INT NOT NULL,
+        extracted_json STRING,
         extraction_timestamp TIMESTAMP,
-        extraction_confidence DOUBLE,
         source_text STRING
     )
     USING DELTA
-    COMMENT 'Silver layer: HEDIS measure definitions'
+    COMMENT 'Silver layer: HEDIS measure definitions extracted with ai_query'
     PARTITIONED BY (effective_year)
 """)
 
@@ -207,144 +214,273 @@ print(f"✅ Silver table created/verified: {silver_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Select Files to Process (Idempotent)
+# MAGIC ## SQL-Based Extraction Pipeline
 # MAGIC
-# MAGIC Two processing modes:
-# MAGIC - **Incremental**: Uses Change Data Feed to process only new/changed files
-# MAGIC - **Full Refresh**: Reprocesses all files (uses MERGE for idempotency)
-
-# COMMAND ----------
-
-if processing_mode == "incremental":
-    print(f"📊 Incremental mode: Using Change Data Feed to detect new files")
-
-    # Get last processed version from silver table (or 0 if first run)
-    try:
-        last_version = spark.sql(f"""
-            SELECT MAX(_commit_version) as max_version
-            FROM table_changes('{bronze_table}', 0)
-            WHERE file_id IN (SELECT DISTINCT file_id FROM {silver_table})
-        """).first()["max_version"]
-
-        if last_version is None:
-            last_version = 0
-            print(f"   First run detected, starting from version 0")
-        else:
-            print(f"   Last processed version: {last_version}")
-    except:
-        last_version = 0
-        print(f"   No prior processing detected, starting from version 0")
-
-    # Get new files from CDF
-    files_to_process = spark.sql(f"""
-        SELECT DISTINCT b.*
-        FROM table_changes('{bronze_table}', {last_version}) cdf
-        INNER JOIN {bronze_table} b ON cdf.file_id = b.file_id
-        WHERE cdf._change_type IN ('insert', 'update_postimage')
-        ORDER BY b.ingestion_timestamp DESC
-        LIMIT {batch_size}
-    """).collect()
-
-    print(f"   📁 Found {len(files_to_process)} new/updated files since version {last_version}")
-
-else:  # full_refresh
-    print(f"🔄 Full refresh mode: Processing all files (idempotent with MERGE)")
-
-    # Get files not yet processed (compare bronze vs silver)
-    files_to_process = spark.sql(f"""
-        SELECT b.*
-        FROM {bronze_table} b
-        LEFT JOIN (
-            SELECT DISTINCT file_id
-            FROM {silver_table}
-        ) s ON b.file_id = s.file_id
-        WHERE s.file_id IS NULL
-        ORDER BY b.ingestion_timestamp DESC
-        LIMIT {batch_size}
-    """).collect()
-
-    print(f"   📁 Found {len(files_to_process)} unprocessed files")
-
-# Display files
-if files_to_process:
-    for f in files_to_process:
-        print(f"   - {f.file_name} ({f.page_count} pages)")
-else:
-    print("   ✅ No new files to process")
+# MAGIC This section uses SQL CTEs to:
+# MAGIC 1. Parse PDFs with `ai_parse_document`
+# MAGIC 2. Extract text from document elements
+# MAGIC 3. Identify Table of Contents entries (page boundaries)
+# MAGIC 4. Extract measure text by page range
+# MAGIC 5. Use `ai_query` to extract structured definitions
+# MAGIC 6. Write results to silver table with MERGE
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Extract Measures from Each File
+# MAGIC ### Step 1: Parse Documents and Extract TOC
 
 # COMMAND ----------
 
-all_measures = []
+# Get files that haven't been processed yet
+files_to_process = spark.sql(f"""
+    SELECT b.file_id, b.file_path, b.file_name, b.effective_year
+    FROM {bronze_table} b
+    LEFT JOIN (
+        SELECT DISTINCT file_id
+        FROM {silver_table}
+    ) s ON b.file_id = s.file_id
+    WHERE s.file_id IS NULL
+    ORDER BY b.ingestion_timestamp DESC
+""")
 
-for file_row in tqdm(files_to_process, desc="Processing files"):
-    try:
-        print(f"\n📄 Processing: {file_row.file_name}")
+file_count = files_to_process.count()
+print(f"📁 Found {file_count} files to process")
 
-        # Parse table of contents using ai_parse_document
-        toc_entries = pdf_processor.extract_table_of_contents(file_row.file_path)
-        print(f"   Found {len(toc_entries)} measures in TOC")
+if file_count > 0:
+    display(files_to_process)
 
-        # Extract each measure
-        for entry in tqdm(toc_entries[:5], desc="Extracting measures", leave=False):  # Limit to 5 for demo
-            try:
-                measure_acronym = entry['measure_acronym']
-                start_page = entry['start_page']
-                end_page = entry.get('end_page', start_page + 10)
+# COMMAND ----------
 
-                print(f"   Extracting {measure_acronym} (pages {start_page}-{end_page})...")
+# MAGIC %md
+# MAGIC ### Step 2: Extract TOC and Measure Text with SQL
 
-                # Extract text from measure pages using ai_parse_document
-                pages = pdf_processor.extract_text_from_pages(
-                    file_row.file_path,
-                    start_page=start_page,
-                    end_page=end_page
+# COMMAND ----------
+
+# Create a SQL query that processes all files at once
+# This uses ai_parse_document to extract text, finds TOC entries, and segments by page ranges
+
+if file_count > 0:
+    # Create temp view of files to process
+    files_to_process.createOrReplaceTempView("files_to_process")
+
+    # SQL extraction pipeline
+    extraction_sql = f"""
+    WITH parsed_documents AS (
+        -- Parse all PDFs with ai_parse_document
+        SELECT
+            f.file_id,
+            f.file_name,
+            f.effective_year,
+            f.file_path as path,
+            ai_parse_document(
+                rf.content,
+                map(
+                    'version', '2.0',
+                    'imageOutputPath', '{volume_path}/parsed_images/',
+                    'descriptionElementTypes', '*'
                 )
+            ) AS parsed
+        FROM files_to_process f
+        CROSS JOIN LATERAL read_files(f.file_path, format => 'binaryFile') rf
+        WHERE try_cast(parsed:error_status AS STRING) IS NULL
+    ),
+    extracted_text AS (
+        -- Extract all text content from elements with page information
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            path,
+            posexplode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) as (element_idx, element)
+        FROM parsed_documents
+    ),
+    element_details AS (
+        -- Get element content and page_id
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            element_idx,
+            try_cast(element:page_id AS INT) as page_id,
+            try_cast(element:type AS STRING) as element_type,
+            try_cast(element:content AS STRING) as content
+        FROM extracted_text
+    ),
+    toc_candidates AS (
+        -- Find TOC entries in first 30 pages using regex pattern
+        -- Pattern: "AMM - Antidepressant Medication Management ... 45"
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            page_id,
+            content,
+            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 1) as measure_acronym,
+            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 2) as measure_title,
+            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 3) as start_page
+        FROM element_details
+        WHERE page_id < 30
+          AND content IS NOT NULL
+          AND content RLIKE '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*.+?\\\\s+\\\\.{{2,}}\\\\s+\\\\d+'
+    ),
+    toc_entries AS (
+        -- Clean TOC entries and assign end pages
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            measure_acronym,
+            trim(measure_title) as measure_title,
+            concat(measure_acronym, ' - ', trim(measure_title)) as measure_name,
+            cast(start_page as int) as start_page,
+            LEAD(cast(start_page as int), 1, cast(start_page as int) + 15) OVER (
+                PARTITION BY file_id
+                ORDER BY cast(start_page as int)
+            ) - 1 as end_page
+        FROM toc_candidates
+        WHERE measure_acronym != ''
+          AND start_page != ''
+    )
+    SELECT * FROM toc_entries
+    ORDER BY file_id, start_page
+    """
 
-                # Combine page text
-                measure_text = "\n\n".join([p.text for p in pages])
+    # Execute TOC extraction
+    toc_df = spark.sql(extraction_sql)
+    toc_count = toc_df.count()
 
-                # Extract with LLM (effective_year from file metadata)
-                measure_dict = llm_extractor.extract_with_retry(
-                    text=measure_text,
-                    effective_year=file_row.effective_year,
-                    max_retries=3
-                )
+    print(f"📊 Extracted {toc_count} TOC entries")
 
-                # Add metadata
-                measure_record = {
-                    "measure_id": str(uuid.uuid4()),
-                    "file_id": file_row.file_id,
-                    "specifications": measure_dict.get("Specifications", ""),
-                    "measure": measure_dict.get("measure", ""),
-                    "initial_pop": measure_dict.get("Initial_Pop"),
-                    "denominator": measure_dict.get("denominator", []),
-                    "numerator": measure_dict.get("numerator", []),
-                    "exclusion": measure_dict.get("exclusion", []),
-                    "effective_year": measure_dict.get("effective_year", file_row.effective_year),
-                    "page_start": start_page,
-                    "page_end": end_page,
-                    "extraction_timestamp": datetime.now(),
-                    "extraction_confidence": 0.95,  # Placeholder
-                    "source_text": measure_text[:5000]  # Store excerpt
-                }
+    if toc_count > 0:
+        # Create temp view for next step
+        toc_df.createOrReplaceTempView("toc_entries")
+        display(toc_df.limit(10))
+else:
+    print("⚠️  No files to process")
 
-                all_measures.append(measure_record)
-                print(f"      ✅ Extracted: {measure_dict.get('measure', 'Unknown')}")
+# COMMAND ----------
 
-            except Exception as e:
-                print(f"      ❌ Failed to extract {entry.get('measure_name', 'Unknown')}: {str(e)}")
+# MAGIC %md
+# MAGIC ### Step 3: Extract Measure Text and Use ai_query for Structured Extraction
 
-        print(f"✅ Completed: {file_row.file_name}")
+# COMMAND ----------
 
-    except Exception as e:
-        print(f"❌ Failed to process file: {str(e)}")
+if file_count > 0 and toc_count > 0:
+    # SQL query to extract measure text and use ai_query
+    measure_extraction_sql = f"""
+    WITH parsed_documents AS (
+        -- Re-parse documents for full text extraction
+        SELECT
+            f.file_id,
+            f.file_name,
+            f.effective_year,
+            ai_parse_document(
+                rf.content,
+                map('version', '2.0')
+            ) AS parsed
+        FROM files_to_process f
+        CROSS JOIN LATERAL read_files(f.file_path, format => 'binaryFile') rf
+    ),
+    all_elements AS (
+        -- Get all elements with page info
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            try_cast(element:page_id AS INT) as page_id,
+            try_cast(element:content AS STRING) as content
+        FROM parsed_documents
+        LATERAL VIEW posexplode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) elem_table as elem_idx, element
+    ),
+    measure_text AS (
+        -- Join TOC entries with elements to get measure-specific text
+        SELECT
+            toc.file_id,
+            toc.file_name,
+            toc.effective_year,
+            toc.measure_acronym,
+            toc.measure_name,
+            toc.start_page,
+            toc.end_page,
+            concat_ws('\\n\\n',
+                collect_list(elem.content)
+            ) as full_text
+        FROM toc_entries toc
+        INNER JOIN all_elements elem
+            ON toc.file_id = elem.file_id
+            AND elem.page_id >= toc.start_page
+            AND elem.page_id <= toc.end_page
+        WHERE elem.content IS NOT NULL
+        GROUP BY
+            toc.file_id,
+            toc.file_name,
+            toc.effective_year,
+            toc.measure_acronym,
+            toc.measure_name,
+            toc.start_page,
+            toc.end_page
+    ),
+    extracted_measures AS (
+        -- Use ai_query to extract structured definitions
+        SELECT
+            uuid() as measure_id,
+            file_id,
+            file_name,
+            measure_acronym,
+            measure_name,
+            start_page as page_start,
+            end_page as page_end,
+            effective_year,
+            current_timestamp() as extraction_timestamp,
+            substring(full_text, 1, 5000) as source_text,
+            ai_query(
+                '{model_endpoint}',
+                concat(
+                    'Extract HEDIS measure definition from this document. ',
+                    'Return a JSON object with these exact keys: ',
+                    'specifications (string), denominator (string), numerator (string), exclusions (string). ',
+                    'If a field is not found, use empty string. ',
+                    'Document text:\\n\\n',
+                    full_text
+                ),
+                returnType => 'STRING'
+            ) AS extracted_json
+        FROM measure_text
+        WHERE length(full_text) > 100
+    )
+    SELECT
+        measure_id,
+        file_id,
+        file_name,
+        measure_acronym,
+        measure_name,
+        page_start,
+        page_end,
+        effective_year,
+        extracted_json,
+        -- Parse JSON fields
+        get_json_object(extracted_json, '$.specifications') as specifications,
+        get_json_object(extracted_json, '$.denominator') as denominator,
+        get_json_object(extracted_json, '$.numerator') as numerator,
+        get_json_object(extracted_json, '$.exclusions') as exclusions,
+        extraction_timestamp,
+        source_text
+    FROM extracted_measures
+    """
 
-print(f"\n📊 Extracted {len(all_measures)} measures total")
+    # Execute measure extraction
+    print("🤖 Running AI extraction with ai_query...")
+    measures_df = spark.sql(measure_extraction_sql)
+
+    # Show sample
+    measure_count = measures_df.count()
+    print(f"✅ Extracted {measure_count} measures")
+
+    if measure_count > 0:
+        display(measures_df.limit(10))
+
+        # Create temp view for merge
+        measures_df.createOrReplaceTempView("extracted_measures")
 
 # COMMAND ----------
 
@@ -353,19 +489,13 @@ print(f"\n📊 Extracted {len(all_measures)} measures total")
 
 # COMMAND ----------
 
-if all_measures:
-    # Create DataFrame
-    measures_df = spark.createDataFrame(all_measures)
-
-    # Create temp view for merge
-    measures_df.createOrReplaceTempView("new_measures")
-
-    # MERGE to make idempotent - upsert based on file_id + measure name
+if file_count > 0 and toc_count > 0 and measure_count > 0:
+    # MERGE to make idempotent - upsert based on file_id + measure_acronym + page_start
     spark.sql(f"""
         MERGE INTO {silver_table} target
-        USING new_measures source
+        USING extracted_measures source
         ON target.file_id = source.file_id
-           AND target.measure = source.measure
+           AND target.measure_acronym = source.measure_acronym
            AND target.page_start = source.page_start
         WHEN MATCHED THEN
             UPDATE SET *
@@ -374,7 +504,7 @@ if all_measures:
     """)
 
     result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
-    print(f"✅ Wrote {len(all_measures)} measures to silver table (MERGE)")
+    print(f"✅ Wrote {measure_count} measures to silver table (MERGE)")
     print(f"   Total measures in table: {result_count}")
 
     # Display sample
@@ -393,7 +523,8 @@ summary = spark.sql(f"""
     SELECT
         effective_year,
         COUNT(*) as measure_count,
-        COUNT(DISTINCT file_id) as file_count
+        COUNT(DISTINCT file_id) as file_count,
+        COUNT(DISTINCT measure_acronym) as unique_measures
     FROM {silver_table}
     GROUP BY effective_year
     ORDER BY effective_year DESC
