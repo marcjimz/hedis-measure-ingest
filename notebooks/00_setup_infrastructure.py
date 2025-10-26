@@ -22,6 +22,14 @@
 
 # COMMAND ----------
 
+# MAGIC %pip install -r ../requirements.txt
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Configuration Parameters
 # MAGIC
@@ -65,7 +73,6 @@ from databricks.vector_search.client import VectorSearchClient
 import time
 
 # Initialize clients
-spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
 vsc = VectorSearchClient()
 
@@ -85,7 +92,7 @@ print(f"🔍 Checking if catalog exists: {catalog_name}")
 
 # Check if catalog exists
 try:
-    catalogs = [c.name for c in spark.sql("SHOW CATALOGS").collect()]
+    catalogs = [row.catalog for row in spark.sql("SHOW CATALOGS").collect()]
     catalog_exists = catalog_name in catalogs
 
     if catalog_exists:
@@ -171,7 +178,7 @@ except Exception:
         volume_info = spark.sql(f"DESCRIBE VOLUME {catalog_name}.{schema_name}.{volume_name}").collect()
         print("\n📁 Volume Details:")
         for row in volume_info:
-            print(f"   {row.info_name}: {row.info_value}")
+            print(f"   {row.col_name}: {row.data_type}")
 
     except Exception as e:
         print(f"❌ Volume creation failed: {str(e)}")
@@ -375,7 +382,7 @@ print("=" * 60)
 
 # Check catalog
 try:
-    catalogs = [c.name for c in spark.sql("SHOW CATALOGS").collect()]
+    catalogs = [row.catalog for row in spark.sql("SHOW CATALOGS").collect()]
     if catalog_name in catalogs:
         print(f"✅ Catalog exists: {catalog_name}")
     else:
@@ -427,94 +434,3 @@ for table_name in tables_to_check:
         print(f"❌ Table not found: {catalog_name}.{schema_name}.{table_name}")
 
 print("=" * 60)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Step 7: Display Summary
-
-# COMMAND ----------
-
-print("\n" + "=" * 60)
-print("📊 INFRASTRUCTURE SETUP SUMMARY")
-print("=" * 60)
-
-print("\n🎯 Resources Created:")
-print(f"   Catalog:  {catalog_name}")
-print(f"   Schema:   {catalog_name}.{schema_name}")
-print(f"   Volume:   /Volumes/{catalog_name}/{schema_name}/{volume_name}")
-print(f"   Endpoint: {vector_endpoint_name}")
-
-print("\n📋 Delta Tables:")
-print(f"   1. {catalog_name}.{schema_name}.hedis_file_metadata (Bronze)")
-print(f"   2. {catalog_name}.{schema_name}.hedis_measures_definitions (Silver)")
-print(f"   3. {catalog_name}.{schema_name}.hedis_measures_chunks (Silver)")
-
-print("\n📁 Volume Path for HEDIS PDFs:")
-volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-print(f"   {volume_path}")
-
-print("\n🚀 Next Steps:")
-print("   1. Upload HEDIS PDF to volume:")
-print(f"      databricks fs cp <local-path>/HEDIS*.pdf dbfs:{volume_path}/")
-print("\n   2. Run the pipeline notebooks in order:")
-print("      - 01_bronze_metadata_ingestion.py")
-print("      - 02_silver_definitions_extraction.py")
-print("      - 03_silver_chunks_processing.py")
-
-print("\n   3. (Optional) Configure Vector Search index:")
-print("      - Open the chunks table in Databricks UI")
-print("      - Click 'Create Vector Search Index'")
-print(f"      - Select endpoint: {vector_endpoint_name}")
-print("      - Set primary key: chunk_id")
-print("      - Set embedding source: chunk_text")
-
-print("\n" + "=" * 60)
-print("✅ Setup complete! Infrastructure is ready.")
-print("=" * 60)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Appendix: Useful Commands
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Check Infrastructure Status
-# MAGIC
-# MAGIC ```python
-# MAGIC # List catalogs
-# MAGIC display(spark.sql("SHOW CATALOGS"))
-# MAGIC
-# MAGIC # List schemas
-# MAGIC display(spark.sql(f"SHOW SCHEMAS IN {catalog_name}"))
-# MAGIC
-# MAGIC # List tables
-# MAGIC display(spark.sql(f"SHOW TABLES IN {catalog_name}.{schema_name}"))
-# MAGIC
-# MAGIC # List volumes
-# MAGIC display(spark.sql(f"SHOW VOLUMES IN {catalog_name}.{schema_name}"))
-# MAGIC
-# MAGIC # Check vector search endpoints
-# MAGIC for endpoint in vsc.list_endpoints():
-# MAGIC     print(f"{endpoint.name}: {endpoint.endpoint_status.state}")
-# MAGIC ```
-# MAGIC
-# MAGIC ### Cleanup Commands (Use with caution!)
-# MAGIC
-# MAGIC ```python
-# MAGIC # Drop tables (WARNING: Deletes all data!)
-# MAGIC # spark.sql(f"DROP TABLE IF EXISTS {catalog_name}.{schema_name}.hedis_file_metadata")
-# MAGIC # spark.sql(f"DROP TABLE IF EXISTS {catalog_name}.{schema_name}.hedis_measures_definitions")
-# MAGIC # spark.sql(f"DROP TABLE IF EXISTS {catalog_name}.{schema_name}.hedis_measures_chunks")
-# MAGIC
-# MAGIC # Drop volume (WARNING: Deletes all files!)
-# MAGIC # spark.sql(f"DROP VOLUME IF EXISTS {catalog_name}.{schema_name}.{volume_name}")
-# MAGIC
-# MAGIC # Drop schema (WARNING: Deletes all tables!)
-# MAGIC # spark.sql(f"DROP SCHEMA IF EXISTS {catalog_name}.{schema_name} CASCADE")
-# MAGIC
-# MAGIC # Delete vector search endpoint (WARNING: Cannot be undone!)
-# MAGIC # vsc.delete_endpoint(vector_endpoint_name)
-# MAGIC ```
