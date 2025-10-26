@@ -145,7 +145,7 @@ if sample_file:
     map_params = ', '.join([f"'{k}', '{v}'" for k, v in parse_params.items()])
     
     # Use ai_parse_document SQL function
-    parsed_result = spark.sql(f"""
+    sql = f"""
         WITH parsed_documents AS (
             SELECT
                 path,
@@ -156,9 +156,9 @@ if sample_file:
             FROM read_files('{sample_path}', format => 'binaryFile')
         )
         SELECT * FROM parsed_documents
-    """)
+    """
 
-    parsed_results = [row.parsed for row in parsed_result.collect()]
+    parsed_results = [row.parsed for row in spark.sql(sql).collect()]
 else:
     print("⚠️  No files in bronze table yet - run bronze ingestion first")
 
