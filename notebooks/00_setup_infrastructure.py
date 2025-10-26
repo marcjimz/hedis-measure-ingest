@@ -39,7 +39,7 @@ dbutils.library.restartPython()
 
 # Configuration widgets - only resource names, no flags
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
+dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
 

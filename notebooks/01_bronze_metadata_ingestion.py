@@ -34,7 +34,7 @@ dbutils.library.restartPython()
 
 # Widgets for parameterization
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
+dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("file_pattern", "HEDIS*.pdf", "File Pattern")
 
@@ -287,7 +287,3 @@ summary = spark.sql(f"""
 
 print("📊 Bronze Table Summary:")
 display(summary)
-
-# COMMAND ----------
-
-
