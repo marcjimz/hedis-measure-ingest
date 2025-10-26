@@ -109,7 +109,6 @@ bronze_schema = StructType([
     StructField("effective_year", IntegerType(), True),
     StructField("file_size_bytes", LongType(), True),
     StructField("page_count", IntegerType(), True),
-    StructField("processing_status", StringType(), True),
     StructField("ingestion_timestamp", TimestampType(), True),
     StructField("last_modified", TimestampType(), True),
     StructField("checksum", StringType(), True)
@@ -126,7 +125,6 @@ spark.sql(f"""
         effective_year INT,
         file_size_bytes LONG,
         page_count INT,
-        processing_status STRING,
         ingestion_timestamp TIMESTAMP,
         last_modified TIMESTAMP,
         checksum STRING
@@ -144,15 +142,25 @@ print(f"✅ Bronze table created/verified: {bronze_table}")
 
 # COMMAND ----------
 
-# List files in volume
-files = dbutils.fs.ls(volume_path)
+import os
 
-# Filter for PDFs matching pattern
-pdf_files = [f for f in files if f.name.endswith('.pdf') and re.match(file_pattern.replace('*', '.*'), f.name)]
-
-print(f"📁 Found {len(pdf_files)} PDF files matching pattern '{file_pattern}':")
-for f in pdf_files:
-    print(f"   - {f.name} ({f.size:,} bytes)")
+try:
+    files_response = w.files.list_directory_contents(directory_path=volume_path)
+    files = list(files_response)
+    
+    # Filter for PDFs matching pattern
+    pdf_files = [f for f in files if f.name.endswith('.pdf') and re.match(file_pattern.replace('*', '.*'), f.name)]
+    
+    if len(pdf_files) == 0:
+        raise Exception("No files found, nothing to process. Please upload files to the volume to proceed with processing.")
+    
+    print(f"📁 Found {len(pdf_files)} PDF files matching pattern '{file_pattern}':")
+    for f in pdf_files:
+        file_size = os.path.getsize(f.path)
+        print(f"   - {f.name} ({file_size:,} bytes)")
+        
+except Exception as e:
+    raise Exception(f"Error accessing volume: {str(e)}")
 
 # COMMAND ----------
 
@@ -164,12 +172,18 @@ for f in pdf_files:
 from tqdm import tqdm
 
 metadata_records = []
+failed_files = []
 
 for file_info in tqdm(pdf_files, desc="Processing PDFs"):
     try:
         file_path = file_info.path
         file_name = file_info.name
-        file_size = file_info.size
+        
+        # Get file size using os.path.getsize since DirectoryEntry doesn't have size attribute
+        file_size = os.path.getsize(file_path)
+        
+        # Get modification time
+        modification_time = os.path.getmtime(file_path)
 
         # Read PDF
         pdf_bytes = pdf_processor.read_pdf_from_volume(file_path)
@@ -191,12 +205,11 @@ for file_info in tqdm(pdf_files, desc="Processing PDFs"):
             "file_id": str(uuid.uuid4()),
             "file_name": file_name,
             "file_path": file_path,
-            "volume_ingestion_date": datetime.fromtimestamp(file_info.modification_time / 1000),
+            "volume_ingestion_date": datetime.fromtimestamp(modification_time),
             "published_date": published_date,
             "effective_year": effective_year,
             "file_size_bytes": file_size,
             "page_count": page_count,
-            "processing_status": "pending",
             "ingestion_timestamp": datetime.now(),
             "last_modified": datetime.now(),
             "checksum": checksum
@@ -205,16 +218,26 @@ for file_info in tqdm(pdf_files, desc="Processing PDFs"):
         print(f"✅ Extracted metadata: {file_name} ({page_count} pages)")
 
     except Exception as e:
+        failed_files.append(file_info.name)
         print(f"❌ Failed to process {file_info.name}: {str(e)}")
+
+# Check if all files were processed successfully
+if failed_files:
+    raise Exception(
+        f"Failed to process {len(failed_files)} out of {len(pdf_files)} files. "
+        f"Failed files: {', '.join(failed_files)}"
+    )
 
 print(f"\n📊 Successfully extracted metadata from {len(metadata_records)} files")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Write to Bronze Table (Idempotent)
+# MAGIC ## Write to Bronze Table
 
 # COMMAND ----------
+
+from pyspark.sql import functions as F
 
 if metadata_records:
     # Create DataFrame
@@ -254,14 +277,17 @@ else:
 # Summary statistics
 summary = spark.sql(f"""
     SELECT
-        processing_status,
+        file_name,
         COUNT(*) as count,
         SUM(page_count) as total_pages,
         SUM(file_size_bytes) / 1024 / 1024 as total_size_mb
-    FROM {bronze_table}
-    GROUP BY processing_status
-    ORDER BY processing_status
+    FROM {bronze_table} 
+    GROUP BY file_name
 """)
 
 print("📊 Bronze Table Summary:")
 display(summary)
+
+# COMMAND ----------
+
+
