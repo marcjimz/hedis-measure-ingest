@@ -63,17 +63,12 @@ print(f"   Bronze Table: {bronze_table}")
 
 import sys
 sys.path.append("../src")
-
-from pyspark.sql import SparkSession
-from pyspark.sql.types import *
-from pyspark.sql import functions as F
 from databricks.sdk import WorkspaceClient
 import uuid
 from datetime import datetime
 import re
 
 # Initialize clients
-spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
 
 # Import custom modules
