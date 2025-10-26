@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Definitions Extraction
 # MAGIC
-# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using LLM-based extraction.
+# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using Databricks `ai_parse_document` and LLM-based extraction.
 # MAGIC
 # MAGIC **Module**: Silver Definitions (Step 2 of 3)
 # MAGIC
@@ -13,8 +13,9 @@
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_definitions`
 # MAGIC
 # MAGIC **Features**:
+# MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
 # MAGIC - Table of Contents parsing for measure boundaries
-# MAGIC - LLM-based structured extraction
+# MAGIC - LLM-based structured extraction (Llama 3.3 70B)
 # MAGIC - Validation and error handling
 
 # COMMAND ----------
@@ -91,6 +92,80 @@ pdf_processor = AIPDFProcessor(spark=spark, workspace_client=w)
 llm_extractor = LLMExtractor(model_endpoint=model_endpoint, temperature=0.0)
 
 print("✅ Environment initialized")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## AI-Powered PDF Parsing with `ai_parse_document`
+# MAGIC
+# MAGIC This pipeline uses Databricks' native `ai_parse_document` SQL function (Runtime 17.1+) for PDF text extraction.
+# MAGIC The function returns structured JSON with classified elements (text, table, header, figure) and handles complex layouts.
+# MAGIC
+# MAGIC **Basic SQL usage:**
+# MAGIC ```sql
+# MAGIC SELECT ai_parse_document(content, map('version', '2.0')) as parsed_doc
+# MAGIC FROM read_files('/Volumes/catalog/schema/volume/file.pdf', format => 'binaryFile')
+# MAGIC ```
+# MAGIC
+# MAGIC The demo below shows the function in action with a sample HEDIS file.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Demo: Extract Structure from Sample PDF
+
+# COMMAND ----------
+
+# Get a sample file path from bronze table
+sample_file = spark.sql(f"""
+    SELECT file_path, file_name
+    FROM {bronze_table}
+    WHERE effective_year = {effective_year}
+    LIMIT 1
+""").collect()
+
+if sample_file:
+    sample_path = sample_file[0].file_path
+    sample_name = sample_file[0].file_name
+
+    print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
+    print(f"   Path: {sample_path}")
+
+    # Use ai_parse_document SQL function directly
+    parsed_result = spark.sql(f"""
+        SELECT
+            path,
+            ai_parse_document(content, map('version', '2.0')) as parsed_doc
+        FROM read_files('{sample_path}', format => 'binaryFile')
+    """).first()
+
+    parsed_doc = parsed_result.parsed_doc
+    document = parsed_doc.get('document', {})
+
+    # Display structure
+    print(f"\n📊 Parsed Document Structure:")
+    print(f"   Pages: {len(document.get('pages', []))}")
+    print(f"   Elements: {len(document.get('elements', []))}")
+
+    # Show element type breakdown
+    elements = document.get('elements', [])
+    if elements:
+        element_types = {}
+        for elem in elements[:100]:  # Sample first 100 elements
+            elem_type = elem.get('type', 'unknown')
+            element_types[elem_type] = element_types.get(elem_type, 0) + 1
+
+        print(f"\n   Element Types (first 100):")
+        for elem_type, count in sorted(element_types.items(), key=lambda x: x[1], reverse=True):
+            print(f"     • {elem_type}: {count}")
+
+        # Show a sample table element if exists
+        tables = [e for e in elements if e.get('type') == 'table']
+        if tables:
+            print(f"\n   Sample Table (HTML format):")
+            print(f"     {tables[0].get('content', '')[:150]}...")
+else:
+    print("⚠️  No files in bronze table yet - run bronze ingestion first")
 
 # COMMAND ----------
 

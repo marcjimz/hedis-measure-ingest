@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Chunks Processing
 # MAGIC
-# MAGIC This notebook chunks HEDIS documents for vector search with semantic preservation.
+# MAGIC This notebook chunks HEDIS documents for vector search using `ai_parse_document` for structure-aware chunking.
 # MAGIC
 # MAGIC **Module**: Silver Chunks (Step 3 of 3)
 # MAGIC
@@ -13,7 +13,8 @@
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_chunks`
 # MAGIC
 # MAGIC **Features**:
-# MAGIC - Header-aware chunking with overlap
+# MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
+# MAGIC - Header-aware chunking with overlap (1536 tokens, 15%)
 # MAGIC - Measure context preservation
 # MAGIC - Ready for vector search delta sync
 
@@ -92,6 +93,22 @@ pdf_processor = AIPDFProcessor(spark=spark, workspace_client=w)
 chunker = HEDISChunker(chunk_size=chunk_size, overlap_percent=overlap_percent)
 
 print("✅ Environment initialized")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## AI-Powered Chunking with `ai_parse_document`
+# MAGIC
+# MAGIC Chunking leverages `ai_parse_document` to preserve document structure. The function identifies headers and sections,
+# MAGIC which enables semantic chunking that respects HEDIS measure boundaries.
+# MAGIC
+# MAGIC **How it helps chunking:**
+# MAGIC - Element classification preserves header hierarchy (H1 > H2 > H3)
+# MAGIC - Bounding boxes help identify page breaks and column layouts
+# MAGIC - Table detection ensures code value sets aren't split across chunks
+# MAGIC
+# MAGIC The `AIPDFProcessor.extract_text_from_pages()` method wraps the SQL function and returns structured PageContent objects
+# MAGIC that the chunker uses to create overlapping, header-aware chunks.
 
 # COMMAND ----------
 
