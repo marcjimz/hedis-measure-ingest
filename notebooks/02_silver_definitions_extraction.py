@@ -7,7 +7,7 @@
 # MAGIC **Module**: Silver Definitions (Step 2 of 3)
 # MAGIC
 # MAGIC **Inputs**:
-# MAGIC - Bronze table: `{catalog}.{schema}.hedis_file_metadata` (status='pending')
+# MAGIC - Bronze table: `{catalog}.{schema}.hedis_file_metadata`
 # MAGIC
 # MAGIC **Outputs**:
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_definitions`
@@ -36,7 +36,7 @@ dbutils.library.restartPython()
 # Widgets
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("model_endpoint", "databricks-meta-llama-3-3-70b-instruct", "LLM Model Endpoint")
+dbutils.widgets.text("model_endpoint", "databricks-claude-sonnet-4-5", "LLM Model Endpoint")
 dbutils.widgets.text("batch_size", "10", "Batch Size")
 dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
@@ -68,7 +68,6 @@ print(f"   Batch Size: {batch_size}")
 import sys
 sys.path.append("../src")
 
-from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql import functions as F
 from databricks.sdk import WorkspaceClient
@@ -77,7 +76,6 @@ from datetime import datetime
 from tqdm import tqdm
 
 # Initialize
-spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
 
 # Set catalog/schema
@@ -117,16 +115,45 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
+sample_path
+
+# COMMAND ----------
+
+sample_file[0]
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SHOW VOLUMES
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT
+# MAGIC ai_parse_document(
+# MAGIC   content,
+# MAGIC   map('version', '2.0')
+# MAGIC ) AS parsed
+# MAGIC FROM READ_FILES('/Volumes/marcin_demo/hedis_measurements/hedis/*.{pdf}', format => 'binaryFile');
+
+# COMMAND ----------
+
+sample_directory
+
+# COMMAND ----------
+
+import os
+
 # Get a sample file path from bronze table
 sample_file = spark.sql(f"""
     SELECT file_path, file_name
     FROM {bronze_table}
-    WHERE effective_year = {effective_year}
     LIMIT 1
 """).collect()
 
 if sample_file:
     sample_path = sample_file[0].file_path
+    sample_directory = os.path.dirname(sample_path)
     sample_name = sample_file[0].file_name
 
     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
@@ -137,7 +164,7 @@ if sample_file:
         SELECT
             path,
             ai_parse_document(content, map('version', '2.0')) as parsed_doc
-        FROM read_files('{sample_path}', format => 'binaryFile')
+        FROM READ_FILES('{sample_directory}', format => 'binaryFile');
     """).first()
 
     parsed_doc = parsed_result.parsed_doc
