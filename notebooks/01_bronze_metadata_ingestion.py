@@ -86,6 +86,15 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    TimestampType,
+    IntegerType,
+    LongType
+)
+
 # Set catalog and schema
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE SCHEMA {schema_name}")

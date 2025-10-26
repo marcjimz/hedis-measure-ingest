@@ -3,7 +3,6 @@ PDF Processing Module for HEDIS Documents
 
 Handles PDF reading, text extraction, OCR, and table of contents parsing.
 """
-
 import io
 import hashlib
 import logging

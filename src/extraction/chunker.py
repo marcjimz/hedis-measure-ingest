@@ -7,7 +7,7 @@ Based on the pdf_chunker.py with enhancements for HEDIS measure boundaries.
 
 import io
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import fitz  # PyMuPDF
 
