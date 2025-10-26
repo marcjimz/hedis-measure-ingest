@@ -96,34 +96,49 @@ class AIPDFProcessor:
             logger.error(f"Failed to read PDF from volume: {str(e)}")
             raise
 
-    def parse_document_with_ai(self, file_path: str) -> Dict:
+    def parse_document_with_ai(self, file_path: str, image_output_path: Optional[str] = None) -> Dict:
         """
         Parse PDF using Databricks ai_parse_document SQL function
 
         Args:
-            file_path: Path to PDF file in Unity Catalog volume
+            file_path: Path to PDF file in Unity Catalog volume (or directory)
+            image_output_path: Optional path to store intermediate page images
 
         Returns:
             Parsed document structure as dictionary with pages and elements
 
         Example:
             >>> result = processor.parse_document_with_ai("/Volumes/main/hedis/data/HEDIS_2025.pdf")
-            >>> print(f"Extracted {len(result['pages'])} pages")
+            >>> print(f"Extracted {len(result.get('document', {}).get('pages', []))} pages")
         """
         logger.info(f"Parsing document with AI: {file_path}")
 
         try:
-            # Read file as binary using Spark
-            df = self.spark.read.format("binaryFile").load(file_path)
+            # Determine image output path (optional but recommended)
+            if image_output_path is None:
+                # Default to same directory with /output suffix
+                import os
+                base_dir = os.path.dirname(file_path)
+                image_output_path = f"{base_dir}/output/"
 
-            # Apply ai_parse_document function
-            parsed_df = df.select(
-                F.col("path"),
-                F.expr("ai_parse_document(content, map('version', '2.0'))").alias("parsed_doc")
-            )
+            # Use SQL with READ_FILES and ai_parse_document
+            # This is the working syntax from the debug notebook
+            sql = f"""
+                SELECT
+                    path,
+                    ai_parse_document(
+                        content,
+                        map(
+                            'version', '2.0',
+                            'imageOutputPath', '{image_output_path}',
+                            'descriptionElementTypes', '*'
+                        )
+                    ) as parsed_doc
+                FROM READ_FILES('{file_path}', format => 'binaryFile')
+            """
 
-            # Collect result
-            result = parsed_df.first()
+            # Execute SQL
+            result = self.spark.sql(sql).first()
 
             if result is None:
                 raise ValueError(f"No data returned from ai_parse_document for {file_path}")
@@ -132,10 +147,16 @@ class AIPDFProcessor:
             parsed_doc = result["parsed_doc"]
 
             # Handle potential parsing errors
-            if "error_status" in parsed_doc and parsed_doc["error_status"]:
-                logger.warning(f"Parsing errors: {parsed_doc['error_status']}")
+            if isinstance(parsed_doc, dict):
+                if "error_status" in parsed_doc and parsed_doc["error_status"]:
+                    logger.warning(f"Parsing errors: {parsed_doc['error_status']}")
 
-            logger.info(f"Successfully parsed document: {len(parsed_doc.get('document', {}).get('pages', []))} pages")
+                document = parsed_doc.get('document', {})
+                pages = document.get('pages', [])
+                logger.info(f"Successfully parsed document: {len(pages)} pages")
+            else:
+                logger.info(f"Parsed document (type: {type(parsed_doc)})")
+
             return parsed_doc
 
         except Exception as e:

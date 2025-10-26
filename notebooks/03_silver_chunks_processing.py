@@ -221,11 +221,11 @@ for file_row in tqdm(files_to_process, desc="Chunking files"):
     try:
         print(f"\n📄 Chunking: {file_row.file_name}")
 
-        # Read PDF
+        # Read PDF bytes (needed for chunker which uses PyMuPDF)
         pdf_bytes = pdf_processor.read_pdf_from_volume(file_row.file_path)
 
-        # Parse TOC for measure context
-        toc_entries = pdf_processor.extract_table_of_contents(pdf_bytes)
+        # Parse TOC for measure context using ai_parse_document
+        toc_entries = pdf_processor.extract_table_of_contents(file_row.file_path)
 
         # Create measure name lookup by page
         page_to_measure = {}

@@ -307,11 +307,8 @@ for file_row in tqdm(files_to_process, desc="Processing files"):
     try:
         print(f"\n📄 Processing: {file_row.file_name}")
 
-        # Read PDF
-        pdf_bytes = pdf_processor.read_pdf_from_volume(file_row.file_path)
-
-        # Parse table of contents
-        toc_entries = pdf_processor.extract_table_of_contents(pdf_bytes)
+        # Parse table of contents using ai_parse_document
+        toc_entries = pdf_processor.extract_table_of_contents(file_row.file_path)
         print(f"   Found {len(toc_entries)} measures in TOC")
 
         # Extract each measure
@@ -323,9 +320,9 @@ for file_row in tqdm(files_to_process, desc="Processing files"):
 
                 print(f"   Extracting {measure_acronym} (pages {start_page}-{end_page})...")
 
-                # Extract text from measure pages
+                # Extract text from measure pages using ai_parse_document
                 pages = pdf_processor.extract_text_from_pages(
-                    pdf_bytes,
+                    file_row.file_path,
                     start_page=start_page,
                     end_page=end_page
                 )
