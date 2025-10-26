@@ -35,10 +35,9 @@ dbutils.library.restartPython()
 
 # Widgets
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
+dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("chunk_size", "1536", "Chunk Size (tokens)")
 dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
-dbutils.widgets.text("effective_year", "2025", "Effective Year")
 dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
 # Get parameters
@@ -46,7 +45,6 @@ catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 chunk_size = int(dbutils.widgets.get("chunk_size"))
 overlap_percent = float(dbutils.widgets.get("overlap_percent"))
-effective_year = int(dbutils.widgets.get("effective_year"))
 processing_mode = dbutils.widgets.get("processing_mode")
 
 # Table names
@@ -181,7 +179,6 @@ if processing_mode == "incremental":
         FROM table_changes('{bronze_table}', {last_version}) cdf
         INNER JOIN {bronze_table} b ON cdf.file_id = b.file_id
         WHERE cdf._change_type IN ('insert', 'update_postimage')
-        AND b.effective_year = {effective_year}
         ORDER BY b.ingestion_timestamp DESC
     """).collect()
 
@@ -198,8 +195,7 @@ else:  # full_refresh
             SELECT DISTINCT file_id
             FROM {silver_table}
         ) s ON b.file_id = s.file_id
-        WHERE b.effective_year = {effective_year}
-        AND s.file_id IS NULL
+        WHERE s.file_id IS NULL
         ORDER BY b.ingestion_timestamp DESC
     """).collect()
 

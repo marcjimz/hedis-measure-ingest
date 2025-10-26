@@ -35,9 +35,8 @@ dbutils.library.restartPython()
 
 # Widgets
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_pipeline", "Schema Name")
+dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("model_endpoint", "databricks-meta-llama-3-3-70b-instruct", "LLM Model Endpoint")
-dbutils.widgets.text("effective_year", "2025", "Effective Year")
 dbutils.widgets.text("batch_size", "10", "Batch Size")
 dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full_refresh"], "Processing Mode")
 
@@ -45,7 +44,6 @@ dbutils.widgets.dropdown("processing_mode", "incremental", ["incremental", "full
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 model_endpoint = dbutils.widgets.get("model_endpoint")
-effective_year = int(dbutils.widgets.get("effective_year"))
 batch_size = int(dbutils.widgets.get("batch_size"))
 processing_mode = dbutils.widgets.get("processing_mode")
 
@@ -57,7 +55,6 @@ print(f"📋 Configuration:")
 print(f"   Bronze Table: {bronze_table}")
 print(f"   Silver Table: {silver_table}")
 print(f"   LLM Endpoint: {model_endpoint}")
-print(f"   Effective Year: {effective_year}")
 print(f"   Processing Mode: {processing_mode}")
 print(f"   Batch Size: {batch_size}")
 
@@ -239,7 +236,6 @@ if processing_mode == "incremental":
         FROM table_changes('{bronze_table}', {last_version}) cdf
         INNER JOIN {bronze_table} b ON cdf.file_id = b.file_id
         WHERE cdf._change_type IN ('insert', 'update_postimage')
-        AND b.effective_year = {effective_year}
         ORDER BY b.ingestion_timestamp DESC
         LIMIT {batch_size}
     """).collect()
@@ -257,8 +253,7 @@ else:  # full_refresh
             SELECT DISTINCT file_id
             FROM {silver_table}
         ) s ON b.file_id = s.file_id
-        WHERE b.effective_year = {effective_year}
-        AND s.file_id IS NULL
+        WHERE s.file_id IS NULL
         ORDER BY b.ingestion_timestamp DESC
         LIMIT {batch_size}
     """).collect()
@@ -311,10 +306,10 @@ for file_row in tqdm(files_to_process, desc="Processing files"):
                 # Combine page text
                 measure_text = "\n\n".join([p.text for p in pages])
 
-                # Extract with LLM
+                # Extract with LLM (effective_year from file metadata)
                 measure_dict = llm_extractor.extract_with_retry(
                     text=measure_text,
-                    effective_year=effective_year,
+                    effective_year=file_row.effective_year,
                     max_retries=3
                 )
 
@@ -328,7 +323,7 @@ for file_row in tqdm(files_to_process, desc="Processing files"):
                     "denominator": measure_dict.get("denominator", []),
                     "numerator": measure_dict.get("numerator", []),
                     "exclusion": measure_dict.get("exclusion", []),
-                    "effective_year": measure_dict.get("effective_year", effective_year),
+                    "effective_year": measure_dict.get("effective_year", file_row.effective_year),
                     "page_start": start_page,
                     "page_end": end_page,
                     "extraction_timestamp": datetime.now(),
