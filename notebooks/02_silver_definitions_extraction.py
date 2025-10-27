@@ -53,11 +53,15 @@ silver_table = f"{catalog_name}.{schema_name}.hedis_measures_definitions"
 volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 IMAGE_OUTPUT_PATH = f"{volume_path}/images"
 
+# TOC extraction configuration
+TOC_PAGE_LIMIT = 15  # Number of pages to use for TOC extraction
+
 print(f"📋 Configuration:")
 print(f"   Bronze Table: {bronze_table}")
 print(f"   Silver Table: {silver_table}")
 print(f"   Volume Path: {volume_path}")
 print(f"   LLM Endpoint: {model_endpoint}")
+print(f"   TOC Page Limit: {TOC_PAGE_LIMIT} pages")
 
 # COMMAND ----------
 
@@ -340,12 +344,52 @@ if file_count > 0:
         
         # Register as temp view for SQL access
         parsed_docs_df.createOrReplaceTempView("parsed_documents")
-        
+
         print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
         print(f"   Available columns: file_id, file_name, effective_year, parsed, full_text, error_status")
-        
+
         # Display summary
         display(parsed_docs_df.select("file_id", "file_name", "effective_year", "error_status"))
+
+        # Extract elements with page numbers
+        print("\n🔍 Extracting elements with page numbers...")
+
+        elements_df = spark.sql("""
+            WITH elements AS (
+                SELECT
+                    file_id,
+                    file_name,
+                    effective_year,
+                    el,
+                    try_cast(el:type AS STRING) AS element_type,
+                    try_cast(el:content AS STRING) AS element_content,
+                    /* Prefer top-level page_id if present, else fallback to bbox page_id */
+                    coalesce(
+                        try_cast(el:page_id AS INT),
+                        try_cast(el:bbox[0]:page_id AS INT)
+                    ) AS page_index_0_based
+                FROM parsed_documents
+                LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
+            )
+            SELECT
+                file_id,
+                file_name,
+                effective_year,
+                element_type,
+                element_content,
+                page_index_0_based + 1 AS page_number
+            FROM elements
+        """)
+
+        # Register as temp view
+        elements_df.createOrReplaceTempView("elements")
+        element_count = elements_df.count()
+
+        print(f"✅ Created 'elements' temp view with {element_count:,} elements")
+        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number")
+
+        # Display element summary
+        display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
     else:
         print("⚠️  No documents successfully parsed")
 else:
@@ -353,15 +397,12 @@ else:
 
 # COMMAND ----------
 
-# Configuration: Number of elements to use for TOC extraction
-TOC_ELEMENT_LIMIT = 2000
+# Verify elements temp view exists
+if spark.catalog.tableExists("elements"):
 
-# Verify parsed_documents temp view exists
-if spark.catalog.tableExists("parsed_documents"):
-    
     print("🔍 Extracting Table of Contents...")
-    
-    # Extract first N elements for TOC (since page numbers are NULL)
+
+    # Extract elements from first N pages for TOC
     toc_input_df = spark.sql(f"""
         SELECT
             file_id,
@@ -369,25 +410,21 @@ if spark.catalog.tableExists("parsed_documents"):
             effective_year,
             concat_ws(
                 '\n\n',
-                transform(
-                    slice(
-                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
-                        1,
-                        {TOC_ELEMENT_LIMIT}
-                    ),
-                    element -> try_cast(element:content AS STRING)
-                )
+                collect_list(element_content)
             ) AS toc_text,
-            {TOC_ELEMENT_LIMIT} AS num_elements_used
-        FROM parsed_documents
-        WHERE error_status IS NULL
+            count(*) AS num_elements_used,
+            {TOC_PAGE_LIMIT} AS page_limit
+        FROM elements
+        WHERE page_number <= {TOC_PAGE_LIMIT}
+            AND element_content IS NOT NULL
+        GROUP BY file_id, file_name, effective_year
     """)
-    
+
     toc_input_list = toc_input_df.collect()
     total_docs = len(toc_input_list)
-    
+
     print(f"📊 Found {total_docs} document(s) to process")
-    print(f"   Using first {TOC_ELEMENT_LIMIT:,} elements per document")
+    print(f"   Using first {TOC_PAGE_LIMIT} pages per document")
     print(f"   Processing sequentially (one document at a time)...\n")
     
     # Process each document sequentially
@@ -396,11 +433,12 @@ if spark.catalog.tableExists("parsed_documents"):
     from tqdm import tqdm
     for idx, doc_row in enumerate(tqdm(toc_input_list, desc="Processing documents"), 1):
         print(f"\n[{idx}/{total_docs}] 📋 {doc_row.file_name}")
-        print(f"         Elements used: {doc_row.num_elements_used:,}")
-        
+        print(f"         Pages used: {doc_row.page_limit}")
+        print(f"         Elements extracted: {doc_row.num_elements_used:,}")
+
         if not doc_row.toc_text or doc_row.toc_text.strip() == "":
             raise ValueError(f"No text content for {doc_row.file_name}")
-        
+
         print(f"         Text length: {len(doc_row.toc_text):,} characters")
         print(f"         Calling ai_query for TOC extraction...")
         
@@ -529,7 +567,7 @@ if spark.catalog.tableExists("parsed_documents"):
     else:
         raise ValueError("No TOC entries extracted from any document")
 else:
-    raise ValueError("'parsed_documents' temp view not found. Please run Cell 1 first.")
+    raise ValueError("'elements' temp view not found. Please run previous cells first.")
 
 # COMMAND ----------
 
