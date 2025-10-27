@@ -1194,7 +1194,3 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
         .limit(1))
 else:
     print("⚠️  No measures extracted")
-
-# COMMAND ----------
-
-
