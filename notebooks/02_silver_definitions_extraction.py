@@ -1103,7 +1103,6 @@ else:
 if file_count > 0 and toc_count > 0 and measure_count > 0:
     print("💾 Writing measures to silver table...")
 
-    # MERGE to make idempotent - upsert based on file_id + measure_acronym + page_start
     spark.sql(f"""
         MERGE INTO {silver_table} target
         USING extracted_measures source
@@ -1170,14 +1169,14 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
             )
     """)
 
-    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
+    # result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
     print(f"✅ Wrote {measure_count} measures to silver table (MERGE)")
     print(f"   Total measures in table: {result_count}")
 
     # Display sample
     print("\nSample measures:")
-    display(spark.table(silver_table))
-        .limit(10)
+    display(spark.table(silver_table)
+        .limit(10))
 
     # Display detailed view of one measure with arrays
     print("\nDetailed view of first measure:")
@@ -1195,3 +1194,7 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
         .limit(1))
 else:
     print("⚠️  No measures extracted")
+
+# COMMAND ----------
+
+
