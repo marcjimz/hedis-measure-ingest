@@ -204,11 +204,12 @@ spark.sql(f"""
         file_id STRING NOT NULL,
         file_name STRING,
         measure_acronym STRING,
+        specifications STRING COMMENT 'Official measure description from NCQA',
         measure STRING NOT NULL COMMENT 'Official measure name with standard acronym',
         initial_pop STRING COMMENT 'Initial identification of measure population - raw text',
-        denominator STRING COMMENT 'Denominator definition - raw text from elements',
-        numerator STRING COMMENT 'Numerator definition - raw text from elements',
-        exclusion STRING COMMENT 'Exclusion criteria - raw text from elements',
+        denominator ARRAY<STRING> COMMENT 'Denominator definition - array of raw text from elements',
+        numerator ARRAY<STRING> COMMENT 'Numerator definition - array of raw text from elements',
+        exclusion ARRAY<STRING> COMMENT 'Exclusion criteria - array of raw text from elements',
         effective_year INT NOT NULL,
         page_start INT COMMENT 'TOC start page',
         page_end INT COMMENT 'TOC end page',
@@ -581,37 +582,6 @@ else:
 
 # COMMAND ----------
 
-sql = f'''describe table parsed_documents'''
-
-# Execute query and display results
-df = spark.sql(sql)
-display(df)
-
-# COMMAND ----------
-
-sql = f'''SELECT
-  file_id, file_name, page_number,
-  element_type,
-  element_content
-FROM elements'''
-
-# Execute query and display results
-df = spark.sql(sql)
-display(df)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-# MAGIC #### done up to here
-# MAGIC
-# MAGIC #### next steps:
-# MAGIC
-# MAGIC 1. For each measure, go to the page, extract the elements, extract text and define schema
-# MAGIC 2. Create table with this
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ### Step 3: Extract Measure Definitions as Raw Text
 # MAGIC
@@ -629,233 +599,493 @@ display(df)
 
 # COMMAND ----------
 
+# if file_count > 0 and toc_count > 0:
+#     print("🤖 Running comprehensive AI extraction with ai_query...")
+#     print(f"   Processing {toc_count} measures across {file_count} files")
+#     print(f"   Using ±{PAGE_MARGIN} page margin for TOC inaccuracies\n")
+
+#     # Get list of all TOC entries
+#     toc_entries_list = spark.sql("SELECT * FROM toc_entries ORDER BY file_id, start_page").collect()
+
+#     all_measures = []
+
+#     from tqdm import tqdm
+#     for idx, toc_entry in enumerate(tqdm(toc_entries_list, desc="Extracting measures"), 1):
+#         try:
+#             print(f"\n[{idx}/{toc_count}] 📋 {toc_entry.measure_name}")
+#             print(f"         File: {toc_entry.file_name}")
+#             print(f"         TOC Pages: {toc_entry.start_page}-{toc_entry.end_page}")
+
+#             # Calculate actual page range with margin
+#             page_start_actual = max(1, toc_entry.start_page - PAGE_MARGIN)
+#             page_end_actual = (toc_entry.end_page + PAGE_MARGIN) if toc_entry.end_page else (toc_entry.start_page + 15 + PAGE_MARGIN)
+
+#             print(f"         Actual Pages (with ±{PAGE_MARGIN} margin): {page_start_actual}-{page_end_actual}")
+
+#             # Extract elements for this measure with comprehensive content
+#             measure_extraction_sql = f"""
+#             WITH measure_elements AS (
+#                 -- Extract all elements within page range including headers/footers
+#                 SELECT
+#                     element_type,
+#                     element_content,
+#                     page_number,
+#                     is_page_metadata
+#                 FROM elements
+#                 WHERE file_id = '{toc_entry.file_id}'
+#                   AND page_number >= {page_start_actual}
+#                   AND page_number <= {page_end_actual}
+#                   AND element_content IS NOT NULL
+#                 ORDER BY page_number, is_page_metadata DESC, element_type
+#             ),
+#             structured_content AS (
+#                 -- Group content by type for better context
+#                 SELECT
+#                     concat_ws('\\n\\n',
+#                         concat('=== PAGE HEADERS AND FOOTERS ===\\n',
+#                             concat_ws('\\n',
+#                                 collect_list(
+#                                     CASE WHEN is_page_metadata THEN
+#                                         concat('[', element_type, ' - Page ', page_number, '] ', element_content)
+#                                     END
+#                                 )
+#                             )
+#                         ),
+#                         '\\n\\n=== MEASURE CONTENT ===\\n',
+#                         concat_ws('\\n\\n',
+#                             collect_list(
+#                                 CASE WHEN NOT is_page_metadata THEN
+#                                     concat('[Page ', page_number, '] ', element_content)
+#                                 END
+#                             )
+#                         )
+#                     ) AS full_text,
+#                     count(*) AS element_count,
+#                     count(CASE WHEN is_page_metadata THEN 1 END) AS metadata_count,
+#                     min(page_number) AS first_page,
+#                     max(page_number) AS last_page
+#                 FROM measure_elements
+#             )
+#             SELECT
+#                 uuid() as measure_id,
+#                 '{toc_entry.file_id}' as file_id,
+#                 '{toc_entry.file_name}' as file_name,
+#                 '{toc_entry.measure_acronym}' as measure_acronym,
+#                 '{toc_entry.measure_name}' as measure_name_from_toc,
+#                 {toc_entry.start_page} as page_start,
+#                 {toc_entry.end_page if toc_entry.end_page else 'NULL'} as page_end,
+#                 {page_start_actual} as page_start_actual,
+#                 {page_end_actual} as page_end_actual,
+#                 {toc_entry.effective_year} as effective_year,
+#                 current_timestamp() as extraction_timestamp,
+#                 full_text,
+#                 element_count,
+#                 metadata_count,
+#                 substring(full_text, 1, 5000) as source_text_preview,
+#                 ai_query(
+#                     '{model_endpoint}',
+#                     concat(
+#                         'You are extracting HEDIS measure definitions from official NCQA documentation. ',
+#                         'Extract the raw text content as it appears in the document elements. ',
+#                         'Page headers and footers contain important context about the measure name and acronym.\\n\\n',
+#                         'Extract the following fields as RAW TEXT (not summarized, not restructured):\\n',
+#                         '1. measure: The official measure name with standard acronym (e.g., "AMM - Antidepressant Medication Management")\\n',
+#                         '2. initial_pop: The initial population definition text - extract the complete text that defines who is initially identified for this measure\\n',
+#                         '3. denominator: The denominator definition text - extract the complete text that defines the denominator criteria\\n',
+#                         '4. numerator: The numerator definition text - extract the complete text that defines numerator compliance criteria\\n',
+#                         '5. exclusion: The exclusion criteria text - extract the complete text that defines exclusions\\n',
+#                         '6. effective_year: The year this measure is effective (extract from document or use {toc_entry.effective_year})\\n\\n',
+#                         'IMPORTANT INSTRUCTIONS:\\n',
+#                         '- Return the text AS-IS from the elements, do not restructure into lists or bullet points\\n',
+#                         '- Extract complete sections, not just summaries\\n',
+#                         '- Maintain accuracy - wrong information impacts patient care\\n',
+#                         '- Use page headers/footers to verify you are extracting the correct measure\\n',
+#                         '- If a section is not found, return empty string\\n\\n',
+#                         'Document content:\\n\\n',
+#                         full_text
+#                     ),
+#                     responseFormat => '{{
+#                         "type": "json_schema",
+#                         "json_schema": {{
+#                             "name": "hedis_measure_definition",
+#                             "strict": true,
+#                             "schema": {{
+#                                 "type": "object",
+#                                 "properties": {{
+#                                     "measure": {{"type": "string"}},
+#                                     "initial_pop": {{"type": "string"}},
+#                                     "denominator": {{"type": "string"}},
+#                                     "numerator": {{"type": "string"}},
+#                                     "exclusion": {{"type": "string"}},
+#                                     "effective_year": {{"type": "integer"}}
+#                                 }},
+#                                 "required": ["measure", "initial_pop", "denominator", "numerator", "exclusion", "effective_year"],
+#                                 "additionalProperties": false
+#                             }}
+#                         }}
+#                     }}'
+#                 ) AS extracted_json
+#             FROM structured_content
+#             WHERE length(full_text) > 100
+#             """
+
+#             # Execute extraction
+#             result = spark.sql(measure_extraction_sql).collect()
+
+#             if result:
+#                 measure_result = result[0]
+
+#                 print(f"         Elements: {measure_result.element_count} total ({measure_result.metadata_count} headers/footers)")
+#                 print(f"         Text length: {len(measure_result.full_text):,} characters")
+#                 print(f"         ✅ Extraction complete")
+
+#                 # Parse JSON response
+#                 import json
+#                 extracted_data = json.loads(measure_result.extracted_json) if isinstance(measure_result.extracted_json, str) else measure_result.extracted_json
+
+#                 # Create record with parsed fields (all text fields)
+#                 measure_record = {
+#                     'measure_id': measure_result.measure_id,
+#                     'file_id': measure_result.file_id,
+#                     'file_name': measure_result.file_name,
+#                     'measure_acronym': measure_result.measure_acronym,
+#                     'measure': extracted_data.get('measure', measure_result.measure_name_from_toc),
+#                     'initial_pop': extracted_data.get('initial_pop', ''),
+#                     'denominator': extracted_data.get('denominator', ''),
+#                     'numerator': extracted_data.get('numerator', ''),
+#                     'exclusion': extracted_data.get('exclusion', ''),
+#                     'effective_year': extracted_data.get('effective_year', measure_result.effective_year),
+#                     'page_start': measure_result.page_start,
+#                     'page_end': measure_result.page_end,
+#                     'page_start_actual': measure_result.page_start_actual,
+#                     'page_end_actual': measure_result.page_end_actual,
+#                     'extraction_timestamp': measure_result.extraction_timestamp,
+#                     'extracted_json': measure_result.extracted_json,
+#                     'source_text_preview': measure_result.source_text_preview
+#                 }
+
+#                 all_measures.append(measure_record)
+
+#         except Exception as e:
+#             print(f"         ❌ Failed to extract: {str(e)}")
+#             import traceback
+#             traceback.print_exc()
+#             continue
+
+#     # Create DataFrame from extracted measures
+#     if all_measures:
+#         from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
+
+#         # Define schema matching the silver table (all text fields are strings)
+#         measures_schema = StructType([
+#             StructField("measure_id", StringType(), False),
+#             StructField("file_id", StringType(), False),
+#             StructField("file_name", StringType(), True),
+#             StructField("measure_acronym", StringType(), True),
+#             StructField("measure", StringType(), False),
+#             StructField("initial_pop", StringType(), True),
+#             StructField("denominator", StringType(), True),
+#             StructField("numerator", StringType(), True),
+#             StructField("exclusion", StringType(), True),
+#             StructField("effective_year", IntegerType(), False),
+#             StructField("page_start", IntegerType(), True),
+#             StructField("page_end", IntegerType(), True),
+#             StructField("page_start_actual", IntegerType(), True),
+#             StructField("page_end_actual", IntegerType(), True),
+#             StructField("extraction_timestamp", TimestampType(), True),
+#             StructField("extracted_json", StringType(), True),
+#             StructField("source_text_preview", StringType(), True)
+#         ])
+
+#         measures_df = spark.createDataFrame(all_measures, schema=measures_schema)
+#         measure_count = measures_df.count()
+
+#         print(f"\n{'='*80}")
+#         print(f"✅ Extraction Summary:")
+#         print(f"   Total measures extracted: {measure_count}")
+#         print(f"   Files processed: {file_count}")
+#         print(f"{'='*80}\n")
+
+#         # Create temp view for merge
+#         measures_df.createOrReplaceTempView("extracted_measures")
+
+#         # Display sample with text lengths
+#         print("Sample of extracted measures:")
+#         display(measures_df.select(
+#             "measure_acronym",
+#             "measure",
+#             "effective_year",
+#             "page_start",
+#             "page_end",
+#             "page_start_actual",
+#             "page_end_actual",
+#             F.length("denominator").alias("denom_length"),
+#             F.length("numerator").alias("numer_length"),
+#             F.length("exclusion").alias("excl_length")
+#         ).limit(10))
+#     else:
+#         measure_count = 0
+#         print("\n⚠️  No measures extracted")
+# else:
+#     measure_count = 0
+#     if file_count == 0:
+#         print("⚠️  No files to process")
+#     elif toc_count == 0:
+#         print("⚠️  No TOC entries found")
+
+# COMMAND ----------
+
 if file_count > 0 and toc_count > 0:
     print("🤖 Running comprehensive AI extraction with ai_query...")
     print(f"   Processing {toc_count} measures across {file_count} files")
     print(f"   Using ±{PAGE_MARGIN} page margin for TOC inaccuracies\n")
 
-    # Get list of all TOC entries
     toc_entries_list = spark.sql("SELECT * FROM toc_entries ORDER BY file_id, start_page").collect()
-
-    all_measures = []
-
-    from tqdm import tqdm
-    for idx, toc_entry in enumerate(tqdm(toc_entries_list, desc="Extracting measures"), 1):
-        try:
-            print(f"\n[{idx}/{toc_count}] 📋 {toc_entry.measure_name}")
-            print(f"         File: {toc_entry.file_name}")
-            print(f"         TOC Pages: {toc_entry.start_page}-{toc_entry.end_page}")
-
-            # Calculate actual page range with margin
-            page_start_actual = max(1, toc_entry.start_page - PAGE_MARGIN)
-            page_end_actual = (toc_entry.end_page + PAGE_MARGIN) if toc_entry.end_page else (toc_entry.start_page + 15 + PAGE_MARGIN)
-
-            print(f"         Actual Pages (with ±{PAGE_MARGIN} margin): {page_start_actual}-{page_end_actual}")
-
-            # Extract elements for this measure with comprehensive content
-            measure_extraction_sql = f"""
-            WITH measure_elements AS (
-                -- Extract all elements within page range including headers/footers
-                SELECT
-                    element_type,
-                    element_content,
-                    page_number,
-                    is_page_metadata
-                FROM elements
-                WHERE file_id = '{toc_entry.file_id}'
-                  AND page_number >= {page_start_actual}
-                  AND page_number <= {page_end_actual}
-                  AND element_content IS NOT NULL
-                ORDER BY page_number, is_page_metadata DESC, element_type
-            ),
-            structured_content AS (
-                -- Group content by type for better context
-                SELECT
-                    concat_ws('\\n\\n',
-                        concat('=== PAGE HEADERS AND FOOTERS ===\\n',
-                            concat_ws('\\n',
-                                collect_list(
-                                    CASE WHEN is_page_metadata THEN
-                                        concat('[', element_type, ' - Page ', page_number, '] ', element_content)
-                                    END
-                                )
-                            )
-                        ),
-                        '\\n\\n=== MEASURE CONTENT ===\\n',
-                        concat_ws('\\n\\n',
-                            collect_list(
-                                CASE WHEN NOT is_page_metadata THEN
-                                    concat('[Page ', page_number, '] ', element_content)
-                                END
-                            )
+    
+    # Create a list to store all measure queries
+    all_measure_queries = []
+    
+    for idx, toc_entry in enumerate(toc_entries_list, 1):
+        # Calculate actual page range with margin
+        page_start_actual = max(1, toc_entry.start_page - PAGE_MARGIN)
+        page_end_actual = (toc_entry.end_page + PAGE_MARGIN) if toc_entry.end_page else (toc_entry.start_page + 15 + PAGE_MARGIN)
+        
+        # Escape single quotes for SQL
+        file_id_escaped = toc_entry.file_id.replace("'", "''")
+        file_name_escaped = toc_entry.file_name.replace("'", "''")
+        measure_acronym_escaped = toc_entry.measure_acronym.replace("'", "''")
+        measure_name_escaped = toc_entry.measure_name.replace("'", "''")
+        
+        measure_info = {
+            'measure_id': f"uuid()",
+            'file_id': file_id_escaped,
+            'file_name': file_name_escaped,
+            'measure_acronym': measure_acronym_escaped,
+            'measure_name_from_toc': measure_name_escaped,
+            'page_start': toc_entry.start_page,
+            'page_end': toc_entry.end_page if toc_entry.end_page else None,
+            'page_start_actual': page_start_actual,
+            'page_end_actual': page_end_actual,
+            'effective_year': toc_entry.effective_year
+        }
+        
+        all_measure_queries.append(measure_info)
+    
+    # Create temporary table with measure metadata
+    from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+    
+    measures_metadata_schema = StructType([
+        StructField("file_id", StringType(), False),
+        StructField("file_name", StringType(), True),
+        StructField("measure_acronym", StringType(), True),
+        StructField("measure_name_from_toc", StringType(), True),
+        StructField("page_start", IntegerType(), True),
+        StructField("page_end", IntegerType(), True),
+        StructField("page_start_actual", IntegerType(), False),
+        StructField("page_end_actual", IntegerType(), False),
+        StructField("effective_year", IntegerType(), False)
+    ])
+    
+    # Create list of tuples for the dataframe
+    measures_metadata_data = [
+        (m['file_id'], m['file_name'], m['measure_acronym'], m['measure_name_from_toc'],
+         m['page_start'], m['page_end'], m['page_start_actual'], m['page_end_actual'], m['effective_year'])
+        for m in all_measure_queries
+    ]
+    
+    measures_metadata_df = spark.createDataFrame(measures_metadata_data, schema=measures_metadata_schema)
+    measures_metadata_df.createOrReplaceTempView("measures_metadata")
+    
+    print(f"🚀 Processing {len(all_measure_queries)} measures with parallel AI extraction...")
+    
+    # Join with elements and perform extraction in one operation
+    from pyspark.sql.functions import expr, col, from_json
+    from pyspark.sql.types import ArrayType, TimestampType
+    
+    extraction_sql = f"""
+    WITH measure_elements AS (
+        SELECT
+            m.file_id,
+            m.file_name,
+            m.measure_acronym,
+            m.measure_name_from_toc,
+            m.page_start,
+            m.page_end,
+            m.page_start_actual,
+            m.page_end_actual,
+            m.effective_year,
+            e.element_type,
+            e.element_content,
+            e.page_number,
+            e.is_page_metadata
+        FROM measures_metadata m
+        INNER JOIN elements e
+            ON m.file_id = e.file_id
+            AND e.page_number >= m.page_start_actual
+            AND e.page_number <= m.page_end_actual
+            AND e.element_content IS NOT NULL
+    ),
+    structured_content AS (
+        SELECT
+            file_id,
+            file_name,
+            measure_acronym,
+            measure_name_from_toc,
+            page_start,
+            page_end,
+            page_start_actual,
+            page_end_actual,
+            effective_year,
+            concat_ws('\\n\\n',
+                concat('=== PAGE HEADERS AND FOOTERS ===\\n',
+                    concat_ws('\\n',
+                        collect_list(
+                            CASE WHEN is_page_metadata THEN
+                                concat('[', element_type, ' - Page ', page_number, '] ', element_content)
+                            END
                         )
-                    ) AS full_text,
-                    count(*) AS element_count,
-                    count(CASE WHEN is_page_metadata THEN 1 END) AS metadata_count,
-                    min(page_number) AS first_page,
-                    max(page_number) AS last_page
-                FROM measure_elements
-            )
-            SELECT
-                uuid() as measure_id,
-                '{toc_entry.file_id}' as file_id,
-                '{toc_entry.file_name}' as file_name,
-                '{toc_entry.measure_acronym}' as measure_acronym,
-                '{toc_entry.measure_name}' as measure_name_from_toc,
-                {toc_entry.start_page} as page_start,
-                {toc_entry.end_page if toc_entry.end_page else 'NULL'} as page_end,
-                {page_start_actual} as page_start_actual,
-                {page_end_actual} as page_end_actual,
-                {toc_entry.effective_year} as effective_year,
-                current_timestamp() as extraction_timestamp,
-                full_text,
-                element_count,
-                metadata_count,
-                substring(full_text, 1, 5000) as source_text_preview,
-                ai_query(
-                    '{model_endpoint}',
-                    concat(
-                        'You are extracting HEDIS measure definitions from official NCQA documentation. ',
-                        'Extract the raw text content as it appears in the document elements. ',
-                        'Page headers and footers contain important context about the measure name and acronym.\\n\\n',
-                        'Extract the following fields as RAW TEXT (not summarized, not restructured):\\n',
-                        '1. measure: The official measure name with standard acronym (e.g., "AMM - Antidepressant Medication Management")\\n',
-                        '2. initial_pop: The initial population definition text - extract the complete text that defines who is initially identified for this measure\\n',
-                        '3. denominator: The denominator definition text - extract the complete text that defines the denominator criteria\\n',
-                        '4. numerator: The numerator definition text - extract the complete text that defines numerator compliance criteria\\n',
-                        '5. exclusion: The exclusion criteria text - extract the complete text that defines exclusions\\n',
-                        '6. effective_year: The year this measure is effective (extract from document or use {toc_entry.effective_year})\\n\\n',
-                        'IMPORTANT INSTRUCTIONS:\\n',
-                        '- Return the text AS-IS from the elements, do not restructure into lists or bullet points\\n',
-                        '- Extract complete sections, not just summaries\\n',
-                        '- Maintain accuracy - wrong information impacts patient care\\n',
-                        '- Use page headers/footers to verify you are extracting the correct measure\\n',
-                        '- If a section is not found, return empty string\\n\\n',
-                        'Document content:\\n\\n',
-                        full_text
-                    ),
-                    responseFormat => '{{
-                        "type": "json_schema",
-                        "json_schema": {{
-                            "name": "hedis_measure_definition",
-                            "strict": true,
-                            "schema": {{
-                                "type": "object",
-                                "properties": {{
-                                    "measure": {{"type": "string"}},
-                                    "initial_pop": {{"type": "string"}},
-                                    "denominator": {{"type": "string"}},
-                                    "numerator": {{"type": "string"}},
-                                    "exclusion": {{"type": "string"}},
-                                    "effective_year": {{"type": "integer"}}
-                                }},
-                                "required": ["measure", "initial_pop", "denominator", "numerator", "exclusion", "effective_year"],
-                                "additionalProperties": false
-                            }}
-                        }}
-                    }}'
-                ) AS extracted_json
-            FROM structured_content
-            WHERE length(full_text) > 100
-            """
-
-            # Execute extraction
-            result = spark.sql(measure_extraction_sql).collect()
-
-            if result:
-                measure_result = result[0]
-
-                print(f"         Elements: {measure_result.element_count} total ({measure_result.metadata_count} headers/footers)")
-                print(f"         Text length: {len(measure_result.full_text):,} characters")
-                print(f"         ✅ Extraction complete")
-
-                # Parse JSON response
-                import json
-                extracted_data = json.loads(measure_result.extracted_json) if isinstance(measure_result.extracted_json, str) else measure_result.extracted_json
-
-                # Create record with parsed fields (all text fields)
-                measure_record = {
-                    'measure_id': measure_result.measure_id,
-                    'file_id': measure_result.file_id,
-                    'file_name': measure_result.file_name,
-                    'measure_acronym': measure_result.measure_acronym,
-                    'measure': extracted_data.get('measure', measure_result.measure_name_from_toc),
-                    'initial_pop': extracted_data.get('initial_pop', ''),
-                    'denominator': extracted_data.get('denominator', ''),
-                    'numerator': extracted_data.get('numerator', ''),
-                    'exclusion': extracted_data.get('exclusion', ''),
-                    'effective_year': extracted_data.get('effective_year', measure_result.effective_year),
-                    'page_start': measure_result.page_start,
-                    'page_end': measure_result.page_end,
-                    'page_start_actual': measure_result.page_start_actual,
-                    'page_end_actual': measure_result.page_end_actual,
-                    'extraction_timestamp': measure_result.extraction_timestamp,
-                    'extracted_json': measure_result.extracted_json,
-                    'source_text_preview': measure_result.source_text_preview
-                }
-
-                all_measures.append(measure_record)
-
-        except Exception as e:
-            print(f"         ❌ Failed to extract: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            continue
-
-    # Create DataFrame from extracted measures
-    if all_measures:
-        from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
-
-        # Define schema matching the silver table (all text fields are strings)
-        measures_schema = StructType([
-            StructField("measure_id", StringType(), False),
-            StructField("file_id", StringType(), False),
-            StructField("file_name", StringType(), True),
-            StructField("measure_acronym", StringType(), True),
-            StructField("measure", StringType(), False),
-            StructField("initial_pop", StringType(), True),
-            StructField("denominator", StringType(), True),
-            StructField("numerator", StringType(), True),
-            StructField("exclusion", StringType(), True),
-            StructField("effective_year", IntegerType(), False),
-            StructField("page_start", IntegerType(), True),
-            StructField("page_end", IntegerType(), True),
-            StructField("page_start_actual", IntegerType(), True),
-            StructField("page_end_actual", IntegerType(), True),
-            StructField("extraction_timestamp", TimestampType(), True),
-            StructField("extracted_json", StringType(), True),
-            StructField("source_text_preview", StringType(), True)
-        ])
-
-        measures_df = spark.createDataFrame(all_measures, schema=measures_schema)
-        measure_count = measures_df.count()
-
-        print(f"\n{'='*80}")
-        print(f"✅ Extraction Summary:")
-        print(f"   Total measures extracted: {measure_count}")
-        print(f"   Files processed: {file_count}")
-        print(f"{'='*80}\n")
-
-        # Create temp view for merge
-        measures_df.createOrReplaceTempView("extracted_measures")
-
-        # Display sample with text lengths
-        print("Sample of extracted measures:")
-        display(measures_df.select(
+                    )
+                ),
+                '\\n\\n=== MEASURE CONTENT ===\\n',
+                concat_ws('\\n\\n',
+                    collect_list(
+                        CASE WHEN NOT is_page_metadata THEN
+                            concat('[Page ', page_number, '] ', element_content)
+                        END
+                    )
+                )
+            ) AS full_text,
+            count(*) AS element_count,
+            count(CASE WHEN is_page_metadata THEN 1 END) AS metadata_count
+        FROM measure_elements
+        GROUP BY file_id, file_name, measure_acronym, measure_name_from_toc,
+                 page_start, page_end, page_start_actual, page_end_actual, effective_year
+    )
+    SELECT
+        uuid() as measure_id,
+        file_id,
+        file_name,
+        measure_acronym,
+        measure_name_from_toc,
+        page_start,
+        page_end,
+        page_start_actual,
+        page_end_actual,
+        effective_year,
+        current_timestamp() as extraction_timestamp,
+        full_text,
+        element_count,
+        metadata_count,
+        substring(full_text, 1, 5000) as source_text_preview,
+        ai_query(
+            '{model_endpoint}',
+            concat(
+                'You are extracting HEDIS measure definitions from official NCQA documentation. ',
+                'Extract the complete raw text content exactly as it appears in the document. ',
+                'Page headers and footers contain important context about the measure name and acronym.\\n\\n',
+                'Extract the following fields:\\n',
+                '1. Specifications: The official measure description/specification text from NCQA\\n',
+                '2. measure: The official measure name with standard acronym (e.g., "LSC - Lead Screening in Children")\\n',
+                '3. Initial_Pop: Extract the complete initial population definition text exactly as written\\n',
+                '4. denominator: Extract ALL denominator text - if there are multiple components or bullet points, include them ALL as separate array items\\n',
+                '5. numerator: Extract ALL numerator text - if there are multiple requirements or bullet points, include them ALL as separate array items\\n',
+                '6. exclusion: Extract ALL exclusion criteria - if there are multiple conditions, include them ALL as separate array items\\n',
+                '7. effective_year: The year this measure is effective (extract from document or use ', effective_year, ')\\n\\n',
+                'CRITICAL INSTRUCTIONS:\\n',
+                '- Extract the COMPLETE, EXACT text from the policy document - do NOT summarize\\n',
+                '- For denominator, numerator, and exclusion: if the document has bullet points or multiple items, return them as separate array entries\\n',
+                '- If a section like "Administrative Specification" or "Hybrid Specification" has denominator/numerator details, extract ALL of that text\\n',
+                '- Maintain accuracy - wrong information impacts patient care\\n',
+                '- Use page headers/footers to verify you are extracting the correct measure\\n',
+                '- If a section is not found, return empty string or empty array\\n\\n',
+                'Document content:\\n\\n',
+                full_text
+            ),
+            responseFormat => '{{
+                "type": "json_schema",
+                "json_schema": {{
+                    "name": "hedis_measure_definition",
+                    "strict": true,
+                    "schema": {{
+                        "type": "object",
+                        "properties": {{
+                            "Specifications": {{"type": "string"}},
+                            "measure": {{"type": "string"}},
+                            "Initial_Pop": {{"type": "string"}},
+                            "denominator": {{
+                                "type": "array",
+                                "items": {{"type": "string"}}
+                            }},
+                            "numerator": {{
+                                "type": "array",
+                                "items": {{"type": "string"}}
+                            }},
+                            "exclusion": {{
+                                "type": "array",
+                                "items": {{"type": "string"}}
+                            }},
+                            "effective_year": {{"type": "integer"}}
+                        }},
+                        "required": ["Specifications", "measure", "Initial_Pop", "denominator", "numerator", "exclusion", "effective_year"],
+                        "additionalProperties": false
+                    }}
+                }}
+            }}'
+        ) AS extracted_json
+    FROM structured_content
+    WHERE length(full_text) > 100
+    """
+    
+    measures_with_extraction_df = spark.sql(extraction_sql)
+    
+    # Parse JSON and extract fields
+    json_schema = StructType([
+        StructField("Specifications", StringType(), True),
+        StructField("measure", StringType(), True),
+        StructField("Initial_Pop", StringType(), True),
+        StructField("denominator", ArrayType(StringType()), True),
+        StructField("numerator", ArrayType(StringType()), True),
+        StructField("exclusion", ArrayType(StringType()), True),
+        StructField("effective_year", IntegerType(), True)
+    ])
+    
+    final_df = measures_with_extraction_df.withColumn("parsed", from_json(col("extracted_json"), json_schema)) \
+        .select(
+            "measure_id",
+            "file_id",
+            "file_name",
             "measure_acronym",
-            "measure",
-            "effective_year",
+            col("parsed.Specifications").alias("specifications"),
+            col("parsed.measure").alias("measure"),
+            col("parsed.Initial_Pop").alias("initial_pop"),
+            col("parsed.denominator").alias("denominator"),      # Changed - no to_json()
+            col("parsed.numerator").alias("numerator"),          # Changed - no to_json()
+            col("parsed.exclusion").alias("exclusion"),          # Changed - no to_json()
+            col("parsed.effective_year").alias("effective_year"),
             "page_start",
             "page_end",
             "page_start_actual",
             "page_end_actual",
-            F.length("denominator").alias("denom_length"),
-            F.length("numerator").alias("numer_length"),
-            F.length("exclusion").alias("excl_length")
-        ).limit(10))
-    else:
-        measure_count = 0
-        print("\n⚠️  No measures extracted")
+            "extraction_timestamp",
+            "extracted_json",
+            "source_text_preview"
+        )
+        
+    measure_count = final_df.count()
+    
+    print(f"\n{'='*80}")
+    print(f"✅ Extraction Summary:")
+    print(f"   Total measures extracted: {measure_count}/{toc_count}")
+    print(f"   Files processed: {file_count}")
+    print(f"{'='*80}\n")
+    
+    # Create temp view
+    final_df.createOrReplaceTempView("extracted_measures")
+    
+    # Display extracted measures
+    print("Extracted measures:")
+    display(final_df)
+    
 else:
     measure_count = 0
     if file_count == 0:
@@ -884,6 +1114,7 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
             UPDATE SET
                 target.measure_id = source.measure_id,
                 target.file_name = source.file_name,
+                target.specifications = source.specifications,
                 target.measure = source.measure,
                 target.initial_pop = source.initial_pop,
                 target.denominator = source.denominator,
@@ -902,6 +1133,7 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
                 file_id,
                 file_name,
                 measure_acronym,
+                specifications,
                 measure,
                 initial_pop,
                 denominator,
@@ -921,6 +1153,7 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
                 source.file_id,
                 source.file_name,
                 source.measure_acronym,
+                source.specifications,
                 source.measure,
                 source.initial_pop,
                 source.denominator,
@@ -941,29 +1174,18 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
     print(f"✅ Wrote {measure_count} measures to silver table (MERGE)")
     print(f"   Total measures in table: {result_count}")
 
-    # Display sample with text lengths
+    # Display sample
     print("\nSample measures:")
-    display(spark.table(silver_table)
-        .select(
-            "measure_acronym",
-            "measure",
-            "effective_year",
-            F.length("denominator").alias("denom_length"),
-            F.length("numerator").alias("numer_length"),
-            F.length("exclusion").alias("excl_length"),
-            "page_start",
-            "page_end",
-            "extraction_timestamp"
-        )
-        .orderBy(F.desc("extraction_timestamp"))
-        .limit(10))
+    display(spark.table(silver_table))
+        .limit(10)
 
-    # Display detailed view of one measure
+    # Display detailed view of one measure with arrays
     print("\nDetailed view of first measure:")
     display(spark.table(silver_table)
         .select(
             "measure_acronym",
             "measure",
+            "specifications",
             "initial_pop",
             "denominator",
             "numerator",
@@ -973,51 +1195,3 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
         .limit(1))
 else:
     print("⚠️  No measures extracted")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Summary
-
-# COMMAND ----------
-
-summary_sql = f"""
-    SELECT
-        effective_year,
-        COUNT(*) as measure_count,
-        COUNT(DISTINCT file_id) as file_count,
-        COUNT(DISTINCT measure_acronym) as unique_measures,
-        ROUND(AVG(length(denominator)), 0) as avg_denom_length,
-        ROUND(AVG(length(numerator)), 0) as avg_numer_length,
-        ROUND(AVG(length(exclusion)), 0) as avg_excl_length,
-        ROUND(AVG(page_end_actual - page_start_actual + 1), 1) as avg_page_range
-    FROM {silver_table}
-    GROUP BY effective_year
-    ORDER BY effective_year DESC
-"""
-
-summary = spark.sql(summary_sql)
-
-print("📊 Silver Table Summary:")
-display(summary)
-
-# Additional quality metrics
-print("\n📈 Data Quality Metrics:")
-quality_metrics = spark.sql(f"""
-    SELECT
-        COUNT(*) as total_measures,
-        COUNT(CASE WHEN initial_pop IS NOT NULL AND initial_pop != '' THEN 1 END) as has_initial_pop,
-        COUNT(CASE WHEN denominator IS NOT NULL AND denominator != '' THEN 1 END) as has_denominator,
-        COUNT(CASE WHEN numerator IS NOT NULL AND numerator != '' THEN 1 END) as has_numerator,
-        COUNT(CASE WHEN exclusion IS NOT NULL AND exclusion != '' THEN 1 END) as has_exclusions,
-        ROUND(AVG(CASE WHEN initial_pop IS NOT NULL THEN length(initial_pop) END), 0) as avg_initial_pop_length,
-        ROUND(AVG(CASE WHEN denominator IS NOT NULL THEN length(denominator) END), 0) as avg_denom_length,
-        ROUND(AVG(CASE WHEN numerator IS NOT NULL THEN length(numerator) END), 0) as avg_numer_length,
-        ROUND(AVG(CASE WHEN exclusion IS NOT NULL THEN length(exclusion) END), 0) as avg_excl_length,
-        MAX(length(denominator)) as max_denom_length,
-        MAX(length(numerator)) as max_numer_length,
-        MAX(length(exclusion)) as max_excl_length
-    FROM {silver_table}
-""")
-
-display(quality_metrics)
