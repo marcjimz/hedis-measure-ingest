@@ -533,6 +533,41 @@ else:
 
 # COMMAND ----------
 
+sql = f'''describe table parsed_documents'''
+
+# Execute query and display results
+df = spark.sql(sql)
+display(df)
+
+# COMMAND ----------
+
+sql = f'''WITH elements AS (
+  SELECT
+    file_name AS path,
+    el,
+    try_cast(el:type AS STRING) AS element_type,
+    try_cast(el:content AS STRING) AS element_content,
+    /* Prefer top-level page_id if present, else fallback to bbox page_id */
+    coalesce(try_cast(el:page_id AS INT),
+             try_cast(el:bbox[0]:page_id AS INT)) AS page_index_0_based
+  FROM parsed_documents
+  LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
+)
+SELECT
+  path,
+  element_type,
+  element_content,
+  page_index_0_based,
+  /* Optionally convert to 1-based for human readability */
+  page_index_0_based + 1 AS page_number_1_based
+FROM elements'''
+
+# Execute query and display results
+df = spark.sql(sql)
+display(df)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC
 # MAGIC #### done up to here
