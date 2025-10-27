@@ -113,7 +113,13 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
+sample_path
+
+# COMMAND ----------
+
 # DBTITLE 1,Document Extraction - This cell may take some time
+import os
+
 # Get a sample file path from bronze table; this does one, in future we will scale this to many files.
 sample_file = spark.sql(f"""
     SELECT file_path, file_name
@@ -123,6 +129,7 @@ sample_file = spark.sql(f"""
 
 if sample_file:
     sample_path = sample_file[0].file_path
+    directory = os.path.dirname(sample_path)
     sample_name = sample_file[0].file_name
 
     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
@@ -135,7 +142,9 @@ if sample_file:
             ai_parse_document(content
             ,
             map(
-            'version', '2.0'
+            'version', '2.0',
+            'imageOutputPath', '{directory}/parsed_images/',
+            'descriptionElementTypes', '*'
             )
         ) as parsed
         FROM
@@ -161,7 +170,7 @@ else:
 
 # COMMAND ----------
 
-from extraction.document_renderer import render_ai_parse_output_interactive
+from src.extraction.document_renderer import render_ai_parse_output_interactive
 
 # Launch interactive viewer with page navigation
 render_ai_parse_output_interactive(parsed_results)
