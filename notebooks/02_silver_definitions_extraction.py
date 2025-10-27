@@ -51,6 +51,7 @@ model_endpoint = dbutils.widgets.get("model_endpoint")
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
 silver_table = f"{catalog_name}.{schema_name}.hedis_measures_definitions"
 volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
+IMAGE_OUTPUT_PATH = f"{volume_path}/images"
 
 print(f"📋 Configuration:")
 print(f"   Bronze Table: {bronze_table}")
@@ -126,10 +127,6 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
-sample_path
-
-# COMMAND ----------
-
 # DBTITLE 1,Document Extraction - This cell may take some time
 import os
 
@@ -156,7 +153,7 @@ if sample_file:
             ,
             map(
             'version', '2.0',
-            'imageOutputPath', '{directory}/parsed_images/',
+            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
             'descriptionElementTypes', '*'
             )
         ) as parsed
@@ -268,72 +265,281 @@ if file_count > 0:
 
 # COMMAND ----------
 
-# Extract TOC from each file using Python API
-# This approach avoids the ARGUMENT_NOT_CONSTANT error from read_files() with dynamic paths
-
 if file_count > 0:
+    print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
+    
+    # Collect file list (small operation)
+    files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
+    
+    # Parse all documents
+    all_parsed_docs = []
+    
     from tqdm import tqdm
-
-    print(f"🔍 Extracting Table of Contents from {file_count} files...")
-
-    # Collect all TOC entries across all files
-    all_toc_entries = []
-
-    # Get list of files to process
-    files_list = files_to_process.collect()
-
-    for file_row in tqdm(files_list, desc="Processing files"):
+    for file_row in tqdm(files_list, desc="Parsing documents"):
         try:
-            print(f"\n📄 Processing: {file_row.file_name}")
-
-            # Extract TOC using AI PDF processor
-            toc_entries = pdf_processor.extract_table_of_contents(file_row.file_path)
-
-            print(f"   Found {len(toc_entries)} measures")
-
-            # Add file metadata to each TOC entry
-            for entry in toc_entries:
-                entry['file_id'] = file_row.file_id
-                entry['file_name'] = file_row.file_name
-                entry['effective_year'] = file_row.effective_year
-                all_toc_entries.append(entry)
-
+            print(f"\n📄 Parsing: {file_row.file_name}")
+            
+            # Parse the document
+            parsed_result = spark.sql(f"""
+                SELECT
+                    '{file_row.file_id}' AS file_id,
+                    '{file_row.file_name}' AS file_name,
+                    {file_row.effective_year} AS effective_year,
+                    ai_parse_document(
+                        content,
+                        map(
+                            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
+                            'descriptionElementTypes', '*'
+                        )
+                    ) AS parsed
+                FROM READ_FILES(
+                    '{file_row.file_path}',
+                    format => 'binaryFile'
+                )
+            """).collect()
+            
+            if parsed_result:
+                result = parsed_result[0]
+                all_parsed_docs.append({
+                    'file_id': result.file_id,
+                    'file_name': result.file_name,
+                    'effective_year': result.effective_year,
+                    'parsed': result.parsed
+                })
+                print(f"   ✅ Parsed successfully")
+            
         except Exception as e:
-            print(f"❌ Failed to extract TOC from {file_row.file_name}: {str(e)}")
+            print(f"   ❌ Failed to parse: {str(e)}")
             continue
+    
+    print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
+    
+    # Create DataFrame from parsed documents
+    if all_parsed_docs:
+        from pyspark.sql.functions import expr
+        
+        # Create DataFrame with parsed content
+        parsed_docs_df = spark.createDataFrame(all_parsed_docs)
+        
+        # Extract full text and error status
+        parsed_docs_df = parsed_docs_df.withColumn(
+            "full_text",
+            expr("""
+                concat_ws(
+                    '\n\n',
+                    transform(
+                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
+                        element -> try_cast(element:content AS STRING)
+                    )
+                )
+            """)
+        ).withColumn(
+            "error_status",
+            expr("try_cast(parsed:error_status AS STRING)")
+        )
+        
+        # Register as temp view for SQL access
+        parsed_docs_df.createOrReplaceTempView("parsed_documents")
+        
+        print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
+        print(f"   Available columns: file_id, file_name, effective_year, parsed, full_text, error_status")
+        
+        # Display summary
+        display(parsed_docs_df.select("file_id", "file_name", "effective_year", "error_status"))
+    else:
+        print("⚠️  No documents successfully parsed")
+else:
+    print("⚠️  No files to process")
 
-    print(f"\n📊 Extracted {len(all_toc_entries)} total TOC entries from {file_count} files")
+# COMMAND ----------
 
-    # Create DataFrame from TOC entries
-    if all_toc_entries:
+# Configuration: Number of elements to use for TOC extraction
+TOC_ELEMENT_LIMIT = 2000
+
+# Verify parsed_documents temp view exists
+if spark.catalog.tableExists("parsed_documents"):
+    
+    print("🔍 Extracting Table of Contents...")
+    
+    # Extract first N elements for TOC (since page numbers are NULL)
+    toc_input_df = spark.sql(f"""
+        SELECT
+            file_id,
+            file_name,
+            effective_year,
+            concat_ws(
+                '\n\n',
+                transform(
+                    slice(
+                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
+                        1,
+                        {TOC_ELEMENT_LIMIT}
+                    ),
+                    element -> try_cast(element:content AS STRING)
+                )
+            ) AS toc_text,
+            {TOC_ELEMENT_LIMIT} AS num_elements_used
+        FROM parsed_documents
+        WHERE error_status IS NULL
+    """)
+    
+    toc_input_list = toc_input_df.collect()
+    total_docs = len(toc_input_list)
+    
+    print(f"📊 Found {total_docs} document(s) to process")
+    print(f"   Using first {TOC_ELEMENT_LIMIT:,} elements per document")
+    print(f"   Processing sequentially (one document at a time)...\n")
+    
+    # Process each document sequentially
+    all_extractions = []
+    
+    from tqdm import tqdm
+    for idx, doc_row in enumerate(tqdm(toc_input_list, desc="Processing documents"), 1):
+        print(f"\n[{idx}/{total_docs}] 📋 {doc_row.file_name}")
+        print(f"         Elements used: {doc_row.num_elements_used:,}")
+        
+        if not doc_row.toc_text or doc_row.toc_text.strip() == "":
+            raise ValueError(f"No text content for {doc_row.file_name}")
+        
+        print(f"         Text length: {len(doc_row.toc_text):,} characters")
+        print(f"         Calling ai_query for TOC extraction...")
+        
+        # Extract TOC using ai_query - only extract measure_acronym, measure_name, start_page
+        toc_result = spark.sql(f"""
+            SELECT
+                ai_query(
+                    '{model_endpoint}',
+                    concat(
+                        'Extract ALL measures from the Table of Contents in this HEDIS document. ',
+                        'Find the "Table of Contents" section and extract EVERY SINGLE measure listed. You know these are entries as they will have a measure acroynym in parantheses. It is very important we map the measure to the start_page, start_pages should be unique to the measure. Do not add, remove, or edit text, simply extract. ',
+                        'For each measure entry, extract: ',
+                        '1. measure_acronym: The acronym in parentheses (e.g., "BCS-E", "ADD-E", "WCC") ',
+                        '2. measure_name: The full name of the measure ',
+                        '3. start_page: The page number at the end of the TOC line (the number after the dots).',
+                        'CRITICAL: Extract ALL measures from the entire TOC, not just the first few. The TOC contains 80+ measures. ',
+                        'The start_page is always the rightmost number on each TOC line. ',
+                        'Return a complete list of ALL measures found in the TOC. ',
+                        '\n\nDocument:\n',
+                        '{doc_row.toc_text.replace("'", "''")}'
+                    ),
+                    responseFormat => '{{
+                        "type": "json_schema",
+                        "json_schema": {{
+                            "name": "hedis_toc",
+                            "strict": true,
+                            "schema": {{
+                                "type": "object",
+                                "properties": {{
+                                    "measures": {{
+                                        "type": "array",
+                                        "items": {{
+                                            "type": "object",
+                                            "properties": {{
+                                                "measure_acronym": {{"type": "string"}},
+                                                "measure_name": {{"type": "string"}},
+                                                "start_page": {{"type": "integer"}}
+                                            }},
+                                            "required": ["measure_acronym", "measure_name", "start_page"],
+                                            "additionalProperties": false
+                                        }}
+                                    }}
+                                }},
+                                "required": ["measures"],
+                                "additionalProperties": false
+                            }}
+                        }}
+                    }}'
+                ) AS toc_response
+        """).collect()
+        
+        if not toc_result or not toc_result[0].toc_response:
+            raise ValueError(f"Empty response from ai_query for {doc_row.file_name}")
+        
+        toc_response = toc_result[0].toc_response
+        
+        # Parse the JSON response
+        import json
+        toc_data = json.loads(toc_response) if isinstance(toc_response, str) else toc_response
+        toc_measures = toc_data.get('measures', []) if isinstance(toc_data, dict) else toc_data
+        
+        print(f"         ✅ Extracted {len(toc_measures)} measures")
+        
+        all_extractions.append({
+            'file_id': doc_row.file_id,
+            'file_name': doc_row.file_name,
+            'effective_year': doc_row.effective_year,
+            'toc_array': toc_measures
+        })
+    
+    # Summary
+    print(f"\n{'='*80}")
+    print(f"📊 TOC Extraction Summary:")
+    print(f"   Total documents: {total_docs}")
+    print(f"   Successful: {len(all_extractions)}")
+    print(f"{'='*80}\n")
+    
+    # Create DataFrame from TOC extractions
+    if all_extractions:
         from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-
-        # Define schema
+        from pyspark.sql.functions import lead, col
+        from pyspark.sql.window import Window
+        
+        # Flatten the array of measures into individual rows
+        all_toc_rows = []
+        for extraction in all_extractions:
+            for measure in extraction['toc_array']:
+                all_toc_rows.append({
+                    'file_id': extraction['file_id'],
+                    'file_name': extraction['file_name'],
+                    'effective_year': extraction['effective_year'],
+                    'measure_acronym': measure.get('measure_acronym') if isinstance(measure, dict) else measure.measure_acronym,
+                    'measure_name': measure.get('measure_name') if isinstance(measure, dict) else measure.measure_name,
+                    'start_page': measure.get('start_page') if isinstance(measure, dict) else measure.start_page
+                })
+        
         toc_schema = StructType([
             StructField("file_id", StringType(), False),
             StructField("file_name", StringType(), False),
             StructField("effective_year", IntegerType(), False),
             StructField("measure_acronym", StringType(), False),
             StructField("measure_name", StringType(), False),
-            StructField("start_page", IntegerType(), False),
-            StructField("end_page", IntegerType(), False)
+            StructField("start_page", IntegerType(), True)
         ])
-
-        # Create DataFrame
-        toc_df = spark.createDataFrame(all_toc_entries, schema=toc_schema)
-        toc_count = toc_df.count()
-
-        # Create temp view for next step
+        
+        toc_df = spark.createDataFrame(all_toc_rows, schema=toc_schema)
+        
+        # Calculate end_page as (next measure's start_page - 1), null for last measure
+        window_spec = Window.partitionBy("file_id", "file_name").orderBy("start_page")
+        toc_df = toc_df.withColumn(
+            "end_page",
+            lead(col("start_page"), 1).over(window_spec) - 1
+        )
+        
         toc_df.createOrReplaceTempView("toc_entries")
-
-        print(f"✅ Created TOC DataFrame with {toc_count} entries")
-        display(toc_df.limit(10))
+        toc_count = toc_df.count()
+        
+        print(f"✅ Created 'toc_entries' table with {toc_count} measure entries")
+        print(f"   Calculated end_page as (next start_page - 1)")
+        
+        if toc_count > 0:
+            display(toc_df)
+        else:
+            raise ValueError("No TOC entries extracted")
     else:
-        toc_count = 0
-        print("⚠️  No TOC entries extracted")
+        raise ValueError("No TOC entries extracted from any document")
 else:
-    toc_count = 0
-    print("⚠️  No files to process")
+    raise ValueError("'parsed_documents' temp view not found. Please run Cell 1 first.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC #### done up to here
+# MAGIC
+# MAGIC #### next steps:
+# MAGIC
+# MAGIC 1. For each measure, go to the page, extract the elements, extract text and define schema
+# MAGIC 2. Create table with this
 
 # COMMAND ----------
 
