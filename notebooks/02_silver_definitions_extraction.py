@@ -113,7 +113,8 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
-# Get a sample file path from bronze table
+# DBTITLE 1,Document Extraction - This cell may take some time
+# Get a sample file path from bronze table; this does one, in future we will scale this to many files.
 sample_file = spark.sql(f"""
     SELECT file_path, file_name
     FROM {bronze_table}
@@ -127,57 +128,41 @@ if sample_file:
     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
     print(f"   Path: {sample_path}")
 
-    # Use ai_parse_document SQL function with CTE pattern
-    parsed_result = spark.sql(f"""
-        WITH parsed_documents AS (
-            SELECT
-                path,
-                ai_parse_document(
-                    content,
-                    map(
-                        'version', '2.0',
-                        'imageOutputPath', '{volume_path}/parsed_images/',
-                        'descriptionElementTypes', '*'
-                    )
-                ) as parsed
-            FROM read_files('{sample_path}', format => 'binaryFile')
-        )
+    sql = f'''
+        with parsed_documents AS (
         SELECT
             path,
-            parsed,
-            try_cast(parsed:error_status AS STRING) as error_status
-        FROM parsed_documents
-    """)
+            ai_parse_document(content
+            ,
+            map(
+            'version', '2.0'
+            )
+        ) as parsed
+        FROM
+            read_files('{sample_path}', format => 'binaryFile')
+        )
+        select * from parsed_documents
+        '''
 
-    # Display structure
-    result = parsed_result.first()
-    if result:
-        parsed_doc = result.parsed
-        if parsed_doc:
-            print(f"\n📊 Parsed Document Structure:")
-            print(f"   Error Status: {result.error_status or 'None'}")
-
-            # Access nested fields
-            doc_info = spark.sql(f"""
-                WITH parsed_documents AS (
-                    SELECT
-                        path,
-                        ai_parse_document(
-                            content,
-                            map('version', '2.0')
-                        ) as parsed
-                    FROM read_files('{sample_path}', format => 'binaryFile')
-                )
-                SELECT
-                    size(try_cast(parsed:document:pages AS ARRAY<VARIANT>)) as page_count,
-                    size(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) as element_count
-                FROM parsed_documents
-            """).first()
-
-            print(f"   Pages: {doc_info.page_count}")
-            print(f"   Elements: {doc_info.element_count}")
+    parsed_results = [row.parsed for row in spark.sql(sql).collect()]
 else:
     print("⚠️  No files in bronze table yet - run bronze ingestion first")
+
+# COMMAND ----------
+
+from src.extraction.document_renderer import DocumentRenderer
+
+#   Parse page selection string and return list of page indices to display.
+#    
+#    Supported formats:
+#    - "all" or None: Display all pages
+#    - "3": Display specific page (1-indexed)
+#    - "1-5": Display page range (inclusive, 1-indexed)
+#    - "1,3,5": Display list of specific pages (1-indexed)
+#    - "1-3,7,10-12": Mixed ranges and individual pages
+#page_selection = "68-72"
+renderer = DocumentRenderer()
+renderer.render_document(parsed_result=parsed_results[0])
 
 # COMMAND ----------
 
