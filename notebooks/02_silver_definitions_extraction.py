@@ -150,19 +150,21 @@ else:
 
 # COMMAND ----------
 
-from src.extraction.document_renderer import DocumentRenderer
+# MAGIC %md
+# MAGIC ### Interactive Document Viewer
+# MAGIC
+# MAGIC Use the controls below to navigate through pages. The viewer provides:
+# MAGIC - **Previous/Next buttons** for sequential navigation
+# MAGIC - **Slider** for quick page selection
+# MAGIC - **Dropdown** for precise page selection
+# MAGIC - **Hover tooltips** over bounding boxes to see element content
 
-#   Parse page selection string and return list of page indices to display.
-#    
-#    Supported formats:
-#    - "all" or None: Display all pages
-#    - "3": Display specific page (1-indexed)
-#    - "1-5": Display page range (inclusive, 1-indexed)
-#    - "1,3,5": Display list of specific pages (1-indexed)
-#    - "1-3,7,10-12": Mixed ranges and individual pages
-#page_selection = "68-72"
-renderer = DocumentRenderer()
-renderer.render_document(parsed_result=parsed_results[0])
+# COMMAND ----------
+
+from extraction.document_renderer import render_ai_parse_output_interactive
+
+# Launch interactive viewer with page navigation
+render_ai_parse_output_interactive(parsed_results)
 
 # COMMAND ----------
 
