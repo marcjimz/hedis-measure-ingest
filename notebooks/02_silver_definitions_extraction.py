@@ -39,7 +39,7 @@ dbutils.library.restartPython()
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
-dbutils.widgets.text("model_endpoint", "databricks-claude-sonnet-4-5", "LLM Model Endpoint")
+dbutils.widgets.text("model_endpoint", "databricks-claude-opus-4-1", "LLM Model Endpoint")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
