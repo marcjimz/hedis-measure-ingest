@@ -249,6 +249,8 @@ if file_count > 0:
 
 # MAGIC %md
 # MAGIC ### Step 2: Extract TOC and Measure Text with SQL
+# MAGIC
+# MAGIC We want to find the table of contents so we understand where each and every measure lives.
 
 # COMMAND ----------
 
