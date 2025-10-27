@@ -65,12 +65,25 @@ print(f"   LLM Endpoint: {model_endpoint}")
 
 # COMMAND ----------
 
+import sys
+sys.path.append("../src")
+
 from pyspark.sql import functions as F
 from datetime import datetime
+from databricks.sdk import WorkspaceClient
+
+# Initialize
+w = WorkspaceClient()
 
 # Set catalog/schema
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE SCHEMA {schema_name}")
+
+# Import AI PDF processor
+from extraction.ai_pdf_processor import AIPDFProcessor
+
+# Initialize processor
+pdf_processor = AIPDFProcessor(spark=spark, workspace_client=w)
 
 print("✅ Environment initialized")
 
@@ -210,15 +223,16 @@ print(f"✅ Silver table created/verified: {silver_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## SQL-Based Extraction Pipeline
+# MAGIC ## Extraction Pipeline
 # MAGIC
-# MAGIC This section uses SQL CTEs to:
-# MAGIC 1. Parse PDFs with `ai_parse_document`
-# MAGIC 2. Extract text from document elements
-# MAGIC 3. Identify Table of Contents entries (page boundaries)
-# MAGIC 4. Extract measure text by page range
-# MAGIC 5. Use `ai_query` to extract structured definitions
-# MAGIC 6. Write results to silver table with MERGE
+# MAGIC This section processes files individually to extract HEDIS measures:
+# MAGIC 1. **Parse PDFs** - Use `ai_parse_document` SQL function to extract document structure
+# MAGIC 2. **Extract TOC** - Use Python API to identify Table of Contents entries (measure boundaries)
+# MAGIC 3. **Extract measure text** - Join TOC with parsed elements by page range
+# MAGIC 4. **Use `ai_query`** - Extract structured definitions (denominator, numerator, exclusions) with LLM
+# MAGIC 5. **Write to silver** - Idempotent MERGE to silver table
+# MAGIC
+# MAGIC **Note**: Files are processed individually to avoid `ARGUMENT_NOT_CONSTANT` error from `read_files()` with dynamic paths.
 
 # COMMAND ----------
 
@@ -254,106 +268,71 @@ if file_count > 0:
 
 # COMMAND ----------
 
-# Create a SQL query that processes all files at once
-# This uses ai_parse_document to extract text, finds TOC entries, and segments by page ranges
+# Extract TOC from each file using Python API
+# This approach avoids the ARGUMENT_NOT_CONSTANT error from read_files() with dynamic paths
 
 if file_count > 0:
-    # Create temp view of files to process
-    files_to_process.createOrReplaceTempView("files_to_process")
+    from tqdm import tqdm
 
-    # SQL extraction pipeline
-    extraction_sql = f"""
-    WITH parsed_documents AS (
-        -- Parse all PDFs with ai_parse_document
-        SELECT
-            f.file_id,
-            f.file_name,
-            f.effective_year,
-            f.file_path as path,
-            ai_parse_document(
-                rf.content,
-                map(
-                    'version', '2.0',
-                    'imageOutputPath', '{volume_path}/parsed_images/',
-                    'descriptionElementTypes', '*'
-                )
-            ) AS parsed
-        FROM files_to_process f
-        CROSS JOIN LATERAL read_files(f.file_path, format => 'binaryFile') rf
-        WHERE try_cast(parsed:error_status AS STRING) IS NULL
-    ),
-    extracted_text AS (
-        -- Extract all text content from elements with page information
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            path,
-            posexplode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) as (element_idx, element)
-        FROM parsed_documents
-    ),
-    element_details AS (
-        -- Get element content and page_id
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            element_idx,
-            try_cast(element:page_id AS INT) as page_id,
-            try_cast(element:type AS STRING) as element_type,
-            try_cast(element:content AS STRING) as content
-        FROM extracted_text
-    ),
-    toc_candidates AS (
-        -- Find TOC entries in first 30 pages using regex pattern
-        -- Pattern: "AMM - Antidepressant Medication Management ... 45"
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            page_id,
-            content,
-            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 1) as measure_acronym,
-            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 2) as measure_title,
-            regexp_extract(content, '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*(.+?)\\\\s+\\\\.{{2,}}\\\\s+(\\\\d+)', 3) as start_page
-        FROM element_details
-        WHERE page_id < 30
-          AND content IS NOT NULL
-          AND content RLIKE '([A-Z]{{2,5}})\\\\s*[-–—]\\\\s*.+?\\\\s+\\\\.{{2,}}\\\\s+\\\\d+'
-    ),
-    toc_entries AS (
-        -- Clean TOC entries and assign end pages
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            measure_acronym,
-            trim(measure_title) as measure_title,
-            concat(measure_acronym, ' - ', trim(measure_title)) as measure_name,
-            cast(start_page as int) as start_page,
-            LEAD(cast(start_page as int), 1, cast(start_page as int) + 15) OVER (
-                PARTITION BY file_id
-                ORDER BY cast(start_page as int)
-            ) - 1 as end_page
-        FROM toc_candidates
-        WHERE measure_acronym != ''
-          AND start_page != ''
-    )
-    SELECT * FROM toc_entries
-    ORDER BY file_id, start_page
-    """
+    print(f"🔍 Extracting Table of Contents from {file_count} files...")
 
-    # Execute TOC extraction
-    toc_df = spark.sql(extraction_sql)
-    toc_count = toc_df.count()
+    # Collect all TOC entries across all files
+    all_toc_entries = []
 
-    print(f"📊 Extracted {toc_count} TOC entries")
+    # Get list of files to process
+    files_list = files_to_process.collect()
 
-    if toc_count > 0:
+    for file_row in tqdm(files_list, desc="Processing files"):
+        try:
+            print(f"\n📄 Processing: {file_row.file_name}")
+
+            # Extract TOC using AI PDF processor
+            toc_entries = pdf_processor.extract_table_of_contents(file_row.file_path)
+
+            print(f"   Found {len(toc_entries)} measures")
+
+            # Add file metadata to each TOC entry
+            for entry in toc_entries:
+                entry['file_id'] = file_row.file_id
+                entry['file_name'] = file_row.file_name
+                entry['effective_year'] = file_row.effective_year
+                all_toc_entries.append(entry)
+
+        except Exception as e:
+            print(f"❌ Failed to extract TOC from {file_row.file_name}: {str(e)}")
+            continue
+
+    print(f"\n📊 Extracted {len(all_toc_entries)} total TOC entries from {file_count} files")
+
+    # Create DataFrame from TOC entries
+    if all_toc_entries:
+        from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+
+        # Define schema
+        toc_schema = StructType([
+            StructField("file_id", StringType(), False),
+            StructField("file_name", StringType(), False),
+            StructField("effective_year", IntegerType(), False),
+            StructField("measure_acronym", StringType(), False),
+            StructField("measure_name", StringType(), False),
+            StructField("start_page", IntegerType(), False),
+            StructField("end_page", IntegerType(), False)
+        ])
+
+        # Create DataFrame
+        toc_df = spark.createDataFrame(all_toc_entries, schema=toc_schema)
+        toc_count = toc_df.count()
+
         # Create temp view for next step
         toc_df.createOrReplaceTempView("toc_entries")
+
+        print(f"✅ Created TOC DataFrame with {toc_count} entries")
         display(toc_df.limit(10))
+    else:
+        toc_count = 0
+        print("⚠️  No TOC entries extracted")
 else:
+    toc_count = 0
     print("⚠️  No files to process")
 
 # COMMAND ----------
@@ -364,121 +343,193 @@ else:
 # COMMAND ----------
 
 if file_count > 0 and toc_count > 0:
-    # SQL query to extract measure text and use ai_query
-    measure_extraction_sql = f"""
-    WITH parsed_documents AS (
-        -- Re-parse documents for full text extraction
-        SELECT
-            f.file_id,
-            f.file_name,
-            f.effective_year,
-            ai_parse_document(
-                rf.content,
-                map('version', '2.0')
-            ) AS parsed
-        FROM files_to_process f
-        CROSS JOIN LATERAL read_files(f.file_path, format => 'binaryFile') rf
-    ),
-    all_elements AS (
-        -- Get all elements with page info
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            try_cast(element:page_id AS INT) as page_id,
-            try_cast(element:content AS STRING) as content
-        FROM parsed_documents
-        LATERAL VIEW posexplode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) elem_table as elem_idx, element
-    ),
-    measure_text AS (
-        -- Join TOC entries with elements to get measure-specific text
-        SELECT
-            toc.file_id,
-            toc.file_name,
-            toc.effective_year,
-            toc.measure_acronym,
-            toc.measure_name,
-            toc.start_page,
-            toc.end_page,
-            concat_ws('\\n\\n',
-                collect_list(elem.content)
-            ) as full_text
-        FROM toc_entries toc
-        INNER JOIN all_elements elem
-            ON toc.file_id = elem.file_id
-            AND elem.page_id >= toc.start_page
-            AND elem.page_id <= toc.end_page
-        WHERE elem.content IS NOT NULL
-        GROUP BY
-            toc.file_id,
-            toc.file_name,
-            toc.effective_year,
-            toc.measure_acronym,
-            toc.measure_name,
-            toc.start_page,
-            toc.end_page
-    ),
-    extracted_measures AS (
-        -- Use ai_query to extract structured definitions
-        SELECT
-            uuid() as measure_id,
-            file_id,
-            file_name,
-            measure_acronym,
-            measure_name,
-            start_page as page_start,
-            end_page as page_end,
-            effective_year,
-            current_timestamp() as extraction_timestamp,
-            substring(full_text, 1, 5000) as source_text,
-            ai_query(
-                '{model_endpoint}',
-                concat(
-                    'Extract HEDIS measure definition from this document. ',
-                    'Return a JSON object with these exact keys: ',
-                    'specifications (string), denominator (string), numerator (string), exclusions (string). ',
-                    'If a field is not found, use empty string. ',
-                    'Document text:\\n\\n',
-                    full_text
-                ),
-                returnType => 'STRING'
-            ) AS extracted_json
-        FROM measure_text
-        WHERE length(full_text) > 100
-    )
-    SELECT
-        measure_id,
-        file_id,
-        file_name,
-        measure_acronym,
-        measure_name,
-        page_start,
-        page_end,
-        effective_year,
-        extracted_json,
-        -- Parse JSON fields
-        get_json_object(extracted_json, '$.specifications') as specifications,
-        get_json_object(extracted_json, '$.denominator') as denominator,
-        get_json_object(extracted_json, '$.numerator') as numerator,
-        get_json_object(extracted_json, '$.exclusions') as exclusions,
-        extraction_timestamp,
-        source_text
-    FROM extracted_measures
-    """
-
-    # Execute measure extraction
     print("🤖 Running AI extraction with ai_query...")
-    measures_df = spark.sql(measure_extraction_sql)
+    print(f"   Processing {file_count} files with {toc_count} measures")
 
-    # Show sample
-    measure_count = measures_df.count()
-    print(f"✅ Extracted {measure_count} measures")
+    # Collect all extracted measures
+    all_measures = []
 
-    if measure_count > 0:
-        display(measures_df.limit(10))
+    # Process each file individually
+    for file_row in tqdm(files_list, desc="Extracting measures"):
+        try:
+            print(f"\n📄 Processing: {file_row.file_name}")
+
+            # Parse document with ai_parse_document (using constant path for this file)
+            file_path = file_row.file_path
+
+            parse_sql = f"""
+            WITH parsed_doc AS (
+                SELECT
+                    ai_parse_document(
+                        content,
+                        map('version', '2.0')
+                    ) AS parsed
+                FROM read_files('{file_path}', format => 'binaryFile')
+            ),
+            all_elements AS (
+                -- Extract all elements with page info
+                SELECT
+                    try_cast(element:page_id AS INT) as page_id,
+                    try_cast(element:content AS STRING) as content
+                FROM parsed_doc
+                LATERAL VIEW posexplode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) elem_table as elem_idx, element
+                WHERE try_cast(element:content AS STRING) IS NOT NULL
+            )
+            SELECT page_id, content
+            FROM all_elements
+            ORDER BY page_id
+            """
+
+            # Execute parsing
+            elements_df = spark.sql(parse_sql)
+
+            # Create temp view for this file's elements
+            elements_df.createOrReplaceTempView("current_file_elements")
+
+            # Get TOC entries for this file
+            file_toc_sql = f"""
+            SELECT
+                file_id,
+                file_name,
+                effective_year,
+                measure_acronym,
+                measure_name,
+                start_page,
+                end_page
+            FROM toc_entries
+            WHERE file_id = '{file_row.file_id}'
+            """
+
+            file_toc_df = spark.sql(file_toc_sql)
+            file_toc_count = file_toc_df.count()
+
+            if file_toc_count == 0:
+                print(f"   No TOC entries found for this file, skipping...")
+                continue
+
+            print(f"   Found {file_toc_count} measures in TOC")
+
+            # Extract measure text and use ai_query
+            measure_sql = f"""
+            WITH file_toc AS (
+                SELECT * FROM ({file_toc_sql}) AS toc
+            ),
+            measure_text AS (
+                -- Join TOC with elements to get measure-specific text
+                SELECT
+                    toc.file_id,
+                    toc.file_name,
+                    toc.effective_year,
+                    toc.measure_acronym,
+                    toc.measure_name,
+                    toc.start_page,
+                    toc.end_page,
+                    concat_ws('\\n\\n',
+                        collect_list(elem.content)
+                    ) as full_text
+                FROM file_toc toc
+                INNER JOIN current_file_elements elem
+                    ON elem.page_id >= toc.start_page
+                    AND elem.page_id <= toc.end_page
+                WHERE elem.content IS NOT NULL
+                GROUP BY
+                    toc.file_id,
+                    toc.file_name,
+                    toc.effective_year,
+                    toc.measure_acronym,
+                    toc.measure_name,
+                    toc.start_page,
+                    toc.end_page
+            ),
+            extracted_measures AS (
+                -- Use ai_query to extract structured definitions
+                SELECT
+                    uuid() as measure_id,
+                    file_id,
+                    file_name,
+                    measure_acronym,
+                    measure_name,
+                    start_page as page_start,
+                    end_page as page_end,
+                    effective_year,
+                    current_timestamp() as extraction_timestamp,
+                    substring(full_text, 1, 5000) as source_text,
+                    ai_query(
+                        '{model_endpoint}',
+                        concat(
+                            'Extract HEDIS measure definition from this document. ',
+                            'Return a JSON object with these exact keys: ',
+                            'specifications (string), denominator (string), numerator (string), exclusions (string). ',
+                            'If a field is not found, use empty string. ',
+                            'Document text:\\n\\n',
+                            full_text
+                        ),
+                        returnType => 'STRING'
+                    ) AS extracted_json
+                FROM measure_text
+                WHERE length(full_text) > 100
+            )
+            SELECT
+                measure_id,
+                file_id,
+                file_name,
+                measure_acronym,
+                measure_name,
+                page_start,
+                page_end,
+                effective_year,
+                extracted_json,
+                -- Parse JSON fields
+                get_json_object(extracted_json, '$.specifications') as specifications,
+                get_json_object(extracted_json, '$.denominator') as denominator,
+                get_json_object(extracted_json, '$.numerator') as numerator,
+                get_json_object(extracted_json, '$.exclusions') as exclusions,
+                extraction_timestamp,
+                source_text
+            FROM extracted_measures
+            """
+
+            # Execute measure extraction for this file
+            file_measures_df = spark.sql(measure_sql)
+            file_measure_count = file_measures_df.count()
+
+            print(f"   Extracted {file_measure_count} measures with ai_query")
+
+            # Collect measures from this file
+            if file_measure_count > 0:
+                file_measures = file_measures_df.collect()
+                all_measures.extend(file_measures)
+
+        except Exception as e:
+            print(f"❌ Failed to extract measures from {file_row.file_name}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    # Create DataFrame from all measures
+    if all_measures:
+        from pyspark.sql import Row
+
+        # Convert Row objects to DataFrame
+        measures_df = spark.createDataFrame(all_measures)
+        measure_count = measures_df.count()
+
+        print(f"\n✅ Extracted {measure_count} total measures from {file_count} files")
 
         # Create temp view for merge
         measures_df.createOrReplaceTempView("extracted_measures")
+
+        # Display sample
+        display(measures_df.limit(10))
+    else:
+        measure_count = 0
+        print("\n⚠️  No measures extracted")
+else:
+    measure_count = 0
+    if file_count == 0:
+        print("⚠️  No files to process")
+    elif toc_count == 0:
+        print("⚠️  No TOC entries found")
 
 # COMMAND ----------
 
