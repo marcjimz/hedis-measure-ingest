@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC This notebook chunks HEDIS documents for vector search using `ai_parse_document` for structure-aware chunking.
 # MAGIC
-# MAGIC **Module**: Silver Chunks (Step 3 of 3)
+# MAGIC **Module**: Silver Chunks for Search (Step 3 of 3)
 # MAGIC
 # MAGIC **Inputs**:
 # MAGIC - Bronze table: `{catalog}.{schema}.hedis_file_metadata` (status='completed')
