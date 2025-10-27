@@ -557,9 +557,7 @@ SELECT
   path,
   element_type,
   element_content,
-  page_index_0_based,
-  /* Optionally convert to 1-based for human readability */
-  page_index_0_based + 1 AS page_number_1_based
+  page_index_0_based + 1 AS page_number
 FROM elements'''
 
 # Execute query and display results
