@@ -36,7 +36,7 @@ dbutils.library.restartPython()
 # Widgets
 dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("chunk_size", "1536", "Chunk Size (tokens)")
+dbutils.widgets.text("chunk_size", "1024", "Chunk Size (tokens)")
 dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
 
 # Get parameters
@@ -68,9 +68,6 @@ sys.path.append("../src")
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql import functions as F
-
-# Initialize
-spark = SparkSession.builder.getOrCreate()
 
 # Set catalog/schema
 spark.sql(f"USE CATALOG {catalog_name}")
@@ -132,21 +129,23 @@ print(f"✅ Silver chunks table created/verified: {silver_table}")
 
 # COMMAND ----------
 
-# Get all files from bronze that need processing
+# Get files that haven't been processed yet
 files_to_process = spark.sql(f"""
-    SELECT b.*
+    SELECT b.file_id, b.file_path, b.file_name, b.effective_year
     FROM {bronze_table} b
-    WHERE b.status = 'completed'
+    LEFT JOIN (
+        SELECT DISTINCT file_id
+        FROM {silver_table}
+    ) s ON b.file_id = s.file_id
+    WHERE s.file_id IS NULL
     ORDER BY b.ingestion_timestamp DESC
-""").collect()
+""")
 
-print(f"📁 Found {len(files_to_process)} files to process")
+file_count = files_to_process.count()
+print(f"📁 Found {file_count} files to process")
 
-if files_to_process:
-    for f in files_to_process:
-        print(f"   - {f.file_name} ({f.page_count} pages)")
-else:
-    print("   ⚠️  No files to process")
+if file_count > 0:
+    display(files_to_process)
 
 # COMMAND ----------
 
@@ -157,48 +156,57 @@ else:
 
 # COMMAND ----------
 
-# Process each file individually (required due to READ_FILES constant path requirement)
-parsed_docs = []
-
-for file_row in files_to_process:
-    print(f"\n📄 Parsing: {file_row.file_name}")
-
-    try:
-        # Parse document with ai_parse_document
-        parse_sql = f"""
-            SELECT
-                '{file_row.file_id}' AS file_id,
-                '{file_row.file_name}' AS file_name,
-                {file_row.effective_year} AS effective_year,
-                path,
-                ai_parse_document(
-                    content,
-                    map(
-                        'version', '2.0',
-                        'imageOutputPath', '/Volumes/{catalog_name}/{schema_name}/hedis_data/output/',
-                        'descriptionElementTypes', '*'
-                    )
-                ) as parsed
-            FROM READ_FILES('{file_row.file_path}', format => 'binaryFile')
-        """
-
-        result = spark.sql(parse_sql).first()
-
-        if result:
-            parsed_docs.append({
-                'file_id': result.file_id,
-                'file_name': result.file_name,
-                'effective_year': result.effective_year,
-                'parsed': result.parsed
-            })
-            print(f"   ✅ Parsed successfully")
-        else:
-            print(f"   ⚠️  No result returned")
-
-    except Exception as e:
-        print(f"   ❌ Failed to parse: {str(e)}")
-
-print(f"\n📊 Successfully parsed {len(parsed_docs)} documents")
+if file_count > 0:
+    print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
+    
+    # Collect file list (small operation)
+    files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
+    
+    # Parse all documents
+    parsed_docs = []
+    
+    from tqdm import tqdm
+    for file_row in tqdm(files_list, desc="Parsing documents"):
+        try:
+            print(f"\n📄 Parsing: {file_row.file_name}")
+            
+            # Parse the document
+            parsed_result = spark.sql(f"""
+                SELECT
+                    '{file_row.file_id}' AS file_id,
+                    '{file_row.file_name}' AS file_name,
+                    {file_row.effective_year} AS effective_year,
+                    ai_parse_document(
+                        content,
+                        map(
+                            'version', '2.0',
+                            'imageOutputPath', '/Volumes/{catalog_name}/{schema_name}/hedis_data/output/',
+                            'descriptionElementTypes', '*'
+                        )
+                    ) AS parsed
+                FROM READ_FILES(
+                    '{file_row.file_path}',
+                    format => 'binaryFile'
+                )
+            """).collect()
+            
+            if parsed_result:
+                result = parsed_result[0]
+                parsed_docs.append({
+                    'file_id': result.file_id,
+                    'file_name': result.file_name,
+                    'effective_year': result.effective_year,
+                    'parsed': result.parsed
+                })
+                print(f"   ✅ Parsed successfully")
+            
+        except Exception as e:
+            print(f"   ❌ Failed to parse: {str(e)}")
+            raise e
+    
+    print(f"\n📊 Successfully parsed {len(parsed_docs)} document(s)")
+else:
+    print("⚠️  No files to process")
 
 # COMMAND ----------
 
