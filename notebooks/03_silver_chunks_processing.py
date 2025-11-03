@@ -404,25 +404,41 @@ if file_count > 0 and page_count > 0:
                 cumulative_length,
                 floor((cumulative_length - content_length) / ({chars_per_chunk} - {overlap_chars})) AS chunk_id
             FROM page_positions
+        ),
+        grouped_chunks AS (
+            SELECT
+                file_id,
+                file_name,
+                effective_year,
+                chunk_id,
+                min(page_number) AS page_start,
+                max(page_number) AS page_end,
+                concat_ws('\\n', collect_list(DISTINCT header)) AS header,
+                concat_ws('\\n', collect_list(DISTINCT footer)) AS footer,
+                concat_ws('\\n\\n', collect_list(page_content)) AS page_content,
+                concat_ws('\\n\\n', collect_list(combined_content)) AS chunk_content,
+                sum(content_length) AS total_chars,
+                cast(sum(content_length) / 4 AS INT) AS token_count
+            FROM chunk_boundaries
+            GROUP BY file_id, file_name, effective_year, chunk_id
+            HAVING sum(content_length) > 100
         )
         SELECT
-            concat(file_id, '_', chunk_id) AS chunk_id,
+            concat(file_id, '_', cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT)) AS chunk_id,
             file_id,
             file_name,
             effective_year,
-            chunk_id AS chunk_sequence,
-            min(page_number) AS page_start,
-            max(page_number) AS page_end,
-            concat_ws('\\n', collect_list(DISTINCT header)) AS header,
-            concat_ws('\\n', collect_list(DISTINCT footer)) AS footer,
-            concat_ws('\\n\\n', collect_list(page_content)) AS page_content,
-            concat_ws('\\n\\n', collect_list(combined_content)) AS chunk_content,
-            sum(content_length) AS total_chars,
-            cast(sum(content_length) / 4 AS INT) AS token_count
-        FROM chunk_boundaries
-        GROUP BY file_id, file_name, effective_year, chunk_id
-        HAVING sum(content_length) > 100
-        ORDER BY file_id, chunk_id
+            cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT) AS chunk_sequence,
+            page_start,
+            page_end,
+            header,
+            footer,
+            page_content,
+            chunk_content,
+            total_chars,
+            token_count
+        FROM grouped_chunks
+        ORDER BY file_id, chunk_sequence
     """
 
     chunks_df = spark.sql(chunks_sql)
