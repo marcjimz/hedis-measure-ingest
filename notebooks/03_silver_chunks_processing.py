@@ -532,58 +532,78 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Summary & Vector Search Preparation
+# MAGIC ## Sync to Vector Search
 
 # COMMAND ----------
 
-summary = spark.sql(f"""
-    SELECT
-        effective_year,
-        COUNT(*) as chunk_count,
-        COUNT(DISTINCT file_id) as file_count,
-        COUNT(DISTINCT measure_name) as measure_count,
-        AVG(token_count) as avg_tokens,
-        SUM(token_count) as total_tokens,
-        MIN(token_count) as min_tokens,
-        MAX(token_count) as max_tokens
-    FROM {silver_table}
-    GROUP BY effective_year
-    ORDER BY effective_year DESC
-""")
+from databricks.vector_search.client import VectorSearchClient
 
-print("📊 Silver Chunks Summary:")
-display(summary)
+# Get vector search endpoint name from setup
+dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
+dbutils.widgets.text("embedding_model", "databricks-bge-large-en", "Embedding Model")
 
-print(f"\n✅ Chunks are ready for vector search delta sync!")
-print(f"   Next step: Configure Databricks Vector Search to sync from {silver_table}")
-print(f"   Column to embed: chunk_content (contains header + footer + page_content)")
+vector_endpoint_name = dbutils.widgets.get("vector_search_endpoint")
+embedding_model = dbutils.widgets.get("embedding_model")
+
+# Initialize Vector Search client
+vsc = VectorSearchClient()
+
+print(f"🔍 Vector Search Configuration:")
+print(f"   Endpoint: {vector_endpoint_name}")
+print(f"   Source Table: {silver_table}")
+print(f"   Embedding Model: {embedding_model}")
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Vector Search Setup Instructions
-# MAGIC
-# MAGIC To create a vector search endpoint and index:
-# MAGIC
-# MAGIC ```python
-# MAGIC from databricks.vector_search.client import VectorSearchClient
-# MAGIC
-# MAGIC vsc = VectorSearchClient()
-# MAGIC
-# MAGIC # Create endpoint (if not exists)
-# MAGIC vsc.create_endpoint(
-# MAGIC     name="hedis_vector_search_endpoint",
-# MAGIC     endpoint_type="STANDARD"
-# MAGIC )
-# MAGIC
-# MAGIC # Create delta sync index
-# MAGIC vsc.create_delta_sync_index(
-# MAGIC     endpoint_name="hedis_vector_search_endpoint",
-# MAGIC     source_table_name="{catalog_name}.{schema_name}.hedis_measures_chunks",
-# MAGIC     index_name="{catalog_name}.{schema_name}.hedis_chunks_index",
-# MAGIC     pipeline_type="TRIGGERED",
-# MAGIC     primary_key="chunk_id",
-# MAGIC     embedding_source_column="chunk_content",  # This column contains header + footer + page_content
-# MAGIC     embedding_model_endpoint_name="databricks-gte-large-en"  # Or your preferred model
-# MAGIC )
-# MAGIC ```
+# Create or get vector search index
+index_name = f"{catalog_name}.{schema_name}.hedis_chunks_index"
+
+print(f"\n📊 Creating/updating vector search index: {index_name}")
+
+try:
+    # Try to get existing index
+    existing_index = vsc.get_index(vector_endpoint_name, index_name)
+    print(f"✅ Index already exists: {index_name}")
+    index = existing_index
+
+except Exception:
+    # Index doesn't exist, create it
+    print(f"🏗️  Creating new delta sync index...")
+
+    index = vsc.create_delta_sync_index(
+        endpoint_name=vector_endpoint_name,
+        source_table_name=silver_table,
+        index_name=index_name,
+        pipeline_type="TRIGGERED",
+        primary_key="chunk_id",
+        embedding_source_column="chunk_content",
+        embedding_model_endpoint_name=embedding_model
+    )
+
+    print(f"✅ Index created: {index_name}")
+
+# COMMAND ----------
+
+# Sync the index
+print("🔄 Syncing index with delta table...")
+
+import time
+
+for attempt in range(1, 11):
+    try:
+        print(f"   Attempt {attempt}/10...")
+        index.sync()
+        print(f"   ✓ Sync started successfully")
+        break
+    except Exception as e:
+        print(f"   Failed: {e}")
+        if attempt < 10:
+            print(f"   Waiting 30 seconds...")
+            time.sleep(30)
+else:
+    print("   ✗ Sync timed out after 10 attempts")
+
+print(f"\n✅ Vector search index synced!")
+print(f"   Index: {index_name}")
+print(f"   Source: {silver_table}")
+print(f"   Embedding column: chunk_content")
