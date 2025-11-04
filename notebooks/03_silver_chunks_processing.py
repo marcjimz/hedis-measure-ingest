@@ -427,7 +427,7 @@ if file_count > 0 and page_count > 0:
         SELECT
             concat(file_id, '_', cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT)) AS chunk_id,
             file_id,
-            effective_year,
+            cast(effective_year AS INT) AS effective_year,
             cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT) AS chunk_sequence,
             cast(page_start AS INT) AS page_start,
             cast(page_end AS INT) AS page_end,
