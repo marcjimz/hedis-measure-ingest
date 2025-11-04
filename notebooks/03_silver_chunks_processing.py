@@ -181,7 +181,7 @@ if file_count > 0:
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
-                    {file_row.effective_year} AS effective_year,
+                    CAST({file_row.effective_year} AS INT) AS effective_year,
                     ai_parse_document(
                         content,
                         map(
@@ -427,16 +427,14 @@ if file_count > 0 and page_count > 0:
         SELECT
             concat(file_id, '_', cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT)) AS chunk_id,
             file_id,
-            file_name,
             effective_year,
             cast(row_number() OVER (PARTITION BY file_id ORDER BY chunk_id) AS INT) AS chunk_sequence,
-            page_start,
-            page_end,
+            cast(page_start AS INT) AS page_start,
+            cast(page_end AS INT) AS page_end,
             header,
             footer,
             page_content,
             chunk_content,
-            total_chars,
             token_count
         FROM grouped_chunks
         ORDER BY file_id, chunk_sequence
@@ -483,7 +481,6 @@ if chunk_count > 0:
     ).withColumn(
         "metadata",
         F.to_json(F.struct(
-            F.col("file_name"),
             F.col("effective_year"),
             F.lit("header_aware_overlap").alias("chunk_strategy")
         ))

@@ -293,7 +293,7 @@ if file_count > 0:
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
-                    {file_row.effective_year} AS effective_year,
+                    CAST({file_row.effective_year} AS INT) AS effective_year,
                     ai_parse_document(
                         content,
                         map(
