@@ -103,6 +103,23 @@ print("✅ Environment initialized")
 
 # COMMAND ----------
 
+# Drop existing table if schema doesn't match (for development)
+try:
+    existing_schema = spark.table(silver_table).schema
+    expected_fields = {'chunk_id', 'file_id', 'measure_name', 'header', 'footer', 'page_content', 'chunk_content',
+                      'chunk_sequence', 'token_count', 'page_start', 'page_end', 'effective_year', 'chunk_timestamp', 'metadata'}
+    actual_fields = {field.name for field in existing_schema.fields}
+
+    if expected_fields != actual_fields:
+        print(f"⚠️  Schema mismatch detected. Dropping and recreating table...")
+        print(f"   Expected: {sorted(expected_fields)}")
+        print(f"   Actual: {sorted(actual_fields)}")
+        spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
+        print(f"   ✅ Dropped old table")
+except Exception as e:
+    print(f"   Table doesn't exist yet or couldn't check schema: {str(e)}")
+
+# Create table with correct schema
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {silver_table} (
         chunk_id STRING NOT NULL,
@@ -570,3 +587,7 @@ print(f"   Column to embed: chunk_content (contains header + footer + page_conte
 # MAGIC     embedding_model_endpoint_name="databricks-gte-large-en"  # Or your preferred model
 # MAGIC )
 # MAGIC ```
+
+# COMMAND ----------
+
+
