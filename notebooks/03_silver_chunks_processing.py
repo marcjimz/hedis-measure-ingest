@@ -587,7 +587,3 @@ print(f"   Column to embed: chunk_content (contains header + footer + page_conte
 # MAGIC     embedding_model_endpoint_name="databricks-gte-large-en"  # Or your preferred model
 # MAGIC )
 # MAGIC ```
-
-# COMMAND ----------
-
-
