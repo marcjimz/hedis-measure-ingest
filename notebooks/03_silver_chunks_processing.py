@@ -176,7 +176,6 @@ if file_count > 0:
         try:
             print(f"\n📄 Parsing: {file_row.file_name}")
 
-            # Parse the document - SAME SYNTAX AS NOTEBOOK 02
             parsed_result = spark.sql(f"""
                 SELECT
                     '{file_row.file_id}' AS file_id,
@@ -208,7 +207,7 @@ if file_count > 0:
 
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
-            continue
+            raise
 
     print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
 
