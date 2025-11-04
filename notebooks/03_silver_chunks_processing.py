@@ -104,22 +104,25 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # Drop existing table if schema doesn't match (for development)
-try:
-    existing_schema = spark.table(silver_table).schema
-    expected_fields = {'chunk_id', 'file_id', 'measure_name', 'header', 'footer', 'page_content', 'chunk_content',
-                      'chunk_sequence', 'token_count', 'page_start', 'page_end', 'effective_year', 'chunk_timestamp', 'metadata'}
-    actual_fields = {field.name for field in existing_schema.fields}
+if spark.catalog.tableExists(silver_table):
+    try:
+        existing_schema = spark.table(silver_table).schema
+        expected_fields = {'chunk_id', 'file_id', 'measure_name', 'header', 'footer', 'page_content', 'chunk_content',
+                          'chunk_sequence', 'token_count', 'page_start', 'page_end', 'effective_year', 'chunk_timestamp', 'metadata'}
+        actual_fields = {field.name for field in existing_schema.fields}
 
-    if expected_fields != actual_fields:
-        print(f"⚠️  Schema mismatch detected. Dropping and recreating table...")
-        print(f"   Expected: {sorted(expected_fields)}")
-        print(f"   Actual: {sorted(actual_fields)}")
-        spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
-        print(f"   ✅ Dropped old table")
-except Exception as e:
-    print(f"   Table doesn't exist yet or couldn't check schema: {str(e)}")
+        if expected_fields != actual_fields:
+            print(f"⚠️  Schema mismatch detected. Dropping and recreating table...")
+            print(f"   Expected: {sorted(expected_fields)}")
+            print(f"   Actual: {sorted(actual_fields)}")
+            spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
+            print(f"   ✅ Dropped old table")
+    except Exception as e:
+        print(f"   Error checking schema: {str(e)}")
+else:
+    print(f"   Table doesn't exist yet, will create it")
 
-# Create table with correct schema
+# Create table with correct schema and CDF enabled
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {silver_table} (
         chunk_id STRING NOT NULL,
@@ -140,9 +143,12 @@ spark.sql(f"""
     USING DELTA
     COMMENT 'Silver layer: HEDIS measure chunks for vector search'
     PARTITIONED BY (effective_year)
+    TBLPROPERTIES (
+        delta.enableChangeDataFeed = true
+    )
 """)
 
-print(f"✅ Silver chunks table created/verified: {silver_table}")
+print(f"✅ Silver chunks table created/verified with CDF enabled: {silver_table}")
 
 # COMMAND ----------
 
@@ -151,7 +157,6 @@ print(f"✅ Silver chunks table created/verified: {silver_table}")
 
 # COMMAND ----------
 
-# Get files that haven't been processed yet
 files_to_process = spark.sql(f"""
     SELECT b.file_id, b.file_path, b.file_name, b.effective_year
     FROM {bronze_table} b
@@ -607,3 +612,44 @@ print(f"\n✅ Vector search index synced!")
 print(f"   Index: {index_name}")
 print(f"   Source: {silver_table}")
 print(f"   Embedding column: chunk_content")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC ## Test your Search Store
+
+# COMMAND ----------
+
+from databricks.vector_search.reranker import DatabricksReranker
+
+query_text = "What are the initial population criteria for colorectal cancer screening?"
+
+# Perform hybrid search with reranking
+results = index.similarity_search(
+    query_text=query_text,
+    columns=["chunk_id", "chunk_content", "page_start", "page_end", "effective_year"],
+    num_results=10,
+    query_type="hybrid",  # Combines ANN semantic search with keyword matching
+    reranker=DatabricksReranker(
+        columns_to_rerank=["chunk_content"]  # Rerank based on chunk content
+    )
+)
+
+# Display top 3 results; feel free to edit
+print(f"📊 Retrieved {len(results['result']['data_array'])} results (showing top 3)\n")
+
+for i, result in enumerate(results['result']['data_array'][:3], 1):
+    chunk_id = result[0]
+    chunk_content = result[1]
+    page_start = result[2]
+    page_end = result[3]
+    effective_year = result[4]
+    score = result[5]
+
+    print(f"Match {i}: Score {score:.3f}")
+    print(f"  Chunk ID: {chunk_id}")
+    print(f"  Year: {effective_year}")
+    print(f"  Pages: {page_start}-{page_end}")
+    print(f"  Content: {chunk_content[:2000]}...")
+    print()
