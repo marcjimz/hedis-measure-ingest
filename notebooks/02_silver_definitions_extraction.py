@@ -293,7 +293,7 @@ if file_count > 0:
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
-                    {file_row.effective_year} AS effective_year,
+                    CAST({file_row.effective_year} AS INT) AS effective_year,
                     ai_parse_document(
                         content,
                         map(
@@ -306,16 +306,17 @@ if file_count > 0:
                     format => 'binaryFile'
                 )
             """).collect()
-            
+
+            # Process ALL results from the parse (defensive - typically 1 per file)
             if parsed_result:
-                result = parsed_result[0]
-                all_parsed_docs.append({
-                    'file_id': result.file_id,
-                    'file_name': result.file_name,
-                    'effective_year': result.effective_year,
-                    'parsed': result.parsed
-                })
-                print(f"   ✅ Parsed successfully")
+                for result in parsed_result:
+                    all_parsed_docs.append({
+                        'file_id': result.file_id,
+                        'file_name': result.file_name,
+                        'effective_year': result.effective_year,
+                        'parsed': result.parsed
+                    })
+                print(f"   ✅ Parsed successfully ({len(parsed_result)} result(s))")
             
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
