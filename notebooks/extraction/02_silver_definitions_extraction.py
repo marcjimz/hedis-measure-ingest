@@ -22,7 +22,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -r ../requirements.txt
+# MAGIC %pip install -r ../../requirements.txt
 
 # COMMAND ----------
 
@@ -73,7 +73,7 @@ print(f"   Page Margin: ±{PAGE_MARGIN} pages")
 # COMMAND ----------
 
 import sys
-sys.path.append("../src")
+sys.path.append("../../src")
 
 from pyspark.sql import functions as F
 from datetime import datetime
@@ -186,7 +186,7 @@ else:
 
 # COMMAND ----------
 
-from src.extraction.document_renderer import render_ai_parse_output_interactive
+from src.sql.functions.document_renderer import render_ai_parse_output_interactive
 
 # Launch interactive viewer with page navigation
 render_ai_parse_output_interactive(parsed_results)

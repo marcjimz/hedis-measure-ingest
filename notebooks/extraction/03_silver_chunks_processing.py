@@ -20,7 +20,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -r ../requirements.txt
+# MAGIC %pip install -r ../../requirements.txt
 
 # COMMAND ----------
 
@@ -68,7 +68,7 @@ print(f"   Overlap: {overlap_percent * 100}%")
 # COMMAND ----------
 
 import sys
-sys.path.append("../src")
+sys.path.append("../../src")
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *

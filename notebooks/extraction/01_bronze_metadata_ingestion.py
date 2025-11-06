@@ -19,7 +19,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -r ../requirements.txt
+# MAGIC %pip install -r ../../requirements.txt
 
 # COMMAND ----------
 
@@ -62,7 +62,7 @@ print(f"   Bronze Table: {bronze_table}")
 # COMMAND ----------
 
 import sys
-sys.path.append("../src")
+sys.path.append("../../src")
 from databricks.sdk import WorkspaceClient
 import uuid
 from datetime import datetime
@@ -71,11 +71,25 @@ import re
 # Initialize clients
 w = WorkspaceClient()
 
-# Import custom modules
-from extraction.pdf_processor import PDFProcessor
+# PDF utility functions
+import hashlib
+import fitz  # PyMuPDF
 
-# Initialize PDF processor
-pdf_processor = PDFProcessor(workspace_client=w)
+def read_pdf_from_volume(file_path: str) -> bytes:
+    """Read PDF file from volume"""
+    response = w.files.download(file_path=file_path)
+    return response.contents.read()
+
+def get_page_count(pdf_bytes: bytes) -> int:
+    """Get page count from PDF bytes"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    count = len(doc)
+    doc.close()
+    return count
+
+def calculate_checksum(pdf_bytes: bytes) -> str:
+    """Calculate SHA256 checksum"""
+    return hashlib.sha256(pdf_bytes).hexdigest()
 
 print("✅ Environment initialized")
 
@@ -186,11 +200,11 @@ for file_info in tqdm(pdf_files, desc="Processing PDFs"):
         modification_time = os.path.getmtime(file_path)
 
         # Read PDF
-        pdf_bytes = pdf_processor.read_pdf_from_volume(file_path)
+        pdf_bytes = read_pdf_from_volume(file_path)
 
         # Extract metadata
-        page_count = pdf_processor.get_page_count(pdf_bytes)
-        checksum = pdf_processor.calculate_checksum(pdf_bytes)
+        page_count = get_page_count(pdf_bytes)
+        checksum = calculate_checksum(pdf_bytes)
 
         # Extract effective year from filename (e.g., "HEDIS MY 2025...")
         year_match = re.search(r'20\d{2}', file_name)
