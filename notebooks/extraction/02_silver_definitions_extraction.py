@@ -22,7 +22,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -r ../requirements.txt
+# MAGIC %pip install -r ../../requirements.txt
 
 # COMMAND ----------
 
@@ -73,7 +73,7 @@ print(f"   Page Margin: ±{PAGE_MARGIN} pages")
 # COMMAND ----------
 
 import sys
-sys.path.append("../src")
+sys.path.append("../../src")
 
 from pyspark.sql import functions as F
 from datetime import datetime
@@ -85,12 +85,6 @@ w = WorkspaceClient()
 # Set catalog/schema
 spark.sql(f"USE CATALOG {catalog_name}")
 spark.sql(f"USE SCHEMA {schema_name}")
-
-# Import AI PDF processor
-from extraction.ai_pdf_processor import AIPDFProcessor
-
-# Initialize processor
-pdf_processor = AIPDFProcessor(spark=spark, workspace_client=w)
 
 print("✅ Environment initialized")
 
@@ -186,7 +180,7 @@ else:
 
 # COMMAND ----------
 
-from src.extraction.document_renderer import render_ai_parse_output_interactive
+from src.sql.functions.document_renderer import render_ai_parse_output_interactive
 
 # Launch interactive viewer with page navigation
 render_ai_parse_output_interactive(parsed_results)
@@ -320,7 +314,7 @@ if file_count > 0:
             
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
-            continue
+            raise e
     
     print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
     
@@ -410,176 +404,177 @@ else:
 # COMMAND ----------
 
 # Verify elements temp view exists
-if spark.catalog.tableExists("elements"):
+if file_count > 0:
+    if spark.catalog.tableExists("elements"):
 
-    print("🔍 Extracting Table of Contents...")
+        print("🔍 Extracting Table of Contents...")
 
-    # Extract elements from first N pages for TOC
-    toc_input_df = spark.sql(f"""
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            concat_ws(
-                '\n\n',
-                collect_list(element_content)
-            ) AS toc_text,
-            count(*) AS num_elements_used,
-            {TOC_PAGE_LIMIT} AS page_limit
-        FROM elements
-        WHERE page_number <= {TOC_PAGE_LIMIT}
-            AND element_content IS NOT NULL
-        GROUP BY file_id, file_name, effective_year
-    """)
-
-    toc_input_list = toc_input_df.collect()
-    total_docs = len(toc_input_list)
-
-    print(f"📊 Found {total_docs} document(s) to process")
-    print(f"   Using first {TOC_PAGE_LIMIT} pages per document")
-    print(f"   Processing sequentially (one document at a time)...\n")
-    
-    # Process each document sequentially
-    all_extractions = []
-    
-    from tqdm import tqdm
-    for idx, doc_row in enumerate(tqdm(toc_input_list, desc="Processing documents"), 1):
-        print(f"\n[{idx}/{total_docs}] 📋 {doc_row.file_name}")
-        print(f"         Pages used: {doc_row.page_limit}")
-        print(f"         Elements extracted: {doc_row.num_elements_used:,}")
-
-        if not doc_row.toc_text or doc_row.toc_text.strip() == "":
-            raise ValueError(f"No text content for {doc_row.file_name}")
-
-        print(f"         Text length: {len(doc_row.toc_text):,} characters")
-        print(f"         Calling ai_query for TOC extraction...")
-        
-        # Extract TOC using ai_query - only extract measure_acronym, measure_name, start_page
-        toc_result = spark.sql(f"""
+        # Extract elements from first N pages for TOC
+        toc_input_df = spark.sql(f"""
             SELECT
-                ai_query(
-                    '{model_endpoint}',
-                    concat(
-                        'Extract ALL measures from the Table of Contents in this HEDIS document. ',
-                        'Find the "Table of Contents" section and extract EVERY SINGLE measure listed. You know these are measures as they will have a acroynym in parantheses next to both the title and page number. It is very important we map the measure to the correct start page number, these should be unique to the measure. Do not add, remove, or edit text, simply extract. Accuracy is VERY important, wrong start_page assignments can negatively impact care.',
-                        'For each measure entry on a single line of the TOC, extract: ',
-                        '1. measure_acronym: The acronym in parentheses (e.g., "BCS-E", "ADD-E", "WCC") ',
-                        '2. measure_name: The full name of the measure ',
-                        '3. start_page: The number at the end of the TOC line (the number after the dots) on the SAME line. Example: "Glycemic Status Assessment for Patients With Diabetes (GSD) ..................................................... 134" would return 134 for the start_page\n',
-                        'CRITICAL: Extract ALL measures from the entire TOC, not just the first few. The table of contents may span many pages.',
-                        'The start_page is always the rightmost number on each TOC line. ',
-                        'Return a complete list of ALL measures found in the TOC. ',
-                        'Please use tree-of-thought reasoning to complete this task. Be confident with the extractions.',
-                        '\n\nDocument:\n',
-                        '{doc_row.toc_text.replace("'", "''")}'
-                    ),
-                    responseFormat => '{{
-                        "type": "json_schema",
-                        "json_schema": {{
-                            "name": "hedis_toc",
-                            "strict": true,
-                            "schema": {{
-                                "type": "object",
-                                "properties": {{
-                                    "measures": {{
-                                        "type": "array",
-                                        "items": {{
-                                            "type": "object",
-                                            "properties": {{
-                                                "measure_acronym": {{"type": "string"}},
-                                                "measure_name": {{"type": "string"}},
-                                                "start_page": {{"type": "integer"}}
-                                            }},
-                                            "required": ["measure_acronym", "measure_name", "start_page"],
-                                            "additionalProperties": false
+                file_id,
+                file_name,
+                effective_year,
+                concat_ws(
+                    '\n\n',
+                    collect_list(element_content)
+                ) AS toc_text,
+                count(*) AS num_elements_used,
+                {TOC_PAGE_LIMIT} AS page_limit
+            FROM elements
+            WHERE page_number <= {TOC_PAGE_LIMIT}
+                AND element_content IS NOT NULL
+            GROUP BY file_id, file_name, effective_year
+        """)
+
+        toc_input_list = toc_input_df.collect()
+        total_docs = len(toc_input_list)
+
+        print(f"📊 Found {total_docs} document(s) to process")
+        print(f"   Using first {TOC_PAGE_LIMIT} pages per document")
+        print(f"   Processing sequentially (one document at a time)...\n")
+        
+        # Process each document sequentially
+        all_extractions = []
+        
+        from tqdm import tqdm
+        for idx, doc_row in enumerate(tqdm(toc_input_list, desc="Processing documents"), 1):
+            print(f"\n[{idx}/{total_docs}] 📋 {doc_row.file_name}")
+            print(f"         Pages used: {doc_row.page_limit}")
+            print(f"         Elements extracted: {doc_row.num_elements_used:,}")
+
+            if not doc_row.toc_text or doc_row.toc_text.strip() == "":
+                raise ValueError(f"No text content for {doc_row.file_name}")
+
+            print(f"         Text length: {len(doc_row.toc_text):,} characters")
+            print(f"         Calling ai_query for TOC extraction...")
+            
+            # Extract TOC using ai_query - only extract measure_acronym, measure_name, start_page
+            toc_result = spark.sql(f"""
+                SELECT
+                    ai_query(
+                        '{model_endpoint}',
+                        concat(
+                            'Extract ALL measures from the Table of Contents in this HEDIS document. ',
+                            'Find the "Table of Contents" section and extract EVERY SINGLE measure listed. You know these are measures as they will have a acroynym in parantheses next to both the title and page number. It is very important we map the measure to the correct start page number, these should be unique to the measure. Do not add, remove, or edit text, simply extract. Accuracy is VERY important, wrong start_page assignments can negatively impact care.',
+                            'For each measure entry on a single line of the TOC, extract: ',
+                            '1. measure_acronym: The acronym in parentheses (e.g., "BCS-E", "ADD-E", "WCC") ',
+                            '2. measure_name: The full name of the measure ',
+                            '3. start_page: The number at the end of the TOC line (the number after the dots) on the SAME line. Example: "Glycemic Status Assessment for Patients With Diabetes (GSD) ..................................................... 134" would return 134 for the start_page\n',
+                            'CRITICAL: Extract ALL measures from the entire TOC, not just the first few. The table of contents may span many pages.',
+                            'The start_page is always the rightmost number on each TOC line. ',
+                            'Return a complete list of ALL measures found in the TOC. ',
+                            'Please use tree-of-thought reasoning to complete this task. Be confident with the extractions.',
+                            '\n\nDocument:\n',
+                            '{doc_row.toc_text.replace("'", "''")}'
+                        ),
+                        responseFormat => '{{
+                            "type": "json_schema",
+                            "json_schema": {{
+                                "name": "hedis_toc",
+                                "strict": true,
+                                "schema": {{
+                                    "type": "object",
+                                    "properties": {{
+                                        "measures": {{
+                                            "type": "array",
+                                            "items": {{
+                                                "type": "object",
+                                                "properties": {{
+                                                    "measure_acronym": {{"type": "string"}},
+                                                    "measure_name": {{"type": "string"}},
+                                                    "start_page": {{"type": "integer"}}
+                                                }},
+                                                "required": ["measure_acronym", "measure_name", "start_page"],
+                                                "additionalProperties": false
+                                            }}
                                         }}
-                                    }}
-                                }},
-                                "required": ["measures"],
-                                "additionalProperties": false
+                                    }},
+                                    "required": ["measures"],
+                                    "additionalProperties": false
+                                }}
                             }}
-                        }}
-                    }}'
-                ) AS toc_response
-        """).collect()
+                        }}'
+                    ) AS toc_response
+            """).collect()
+            
+            if not toc_result or not toc_result[0].toc_response:
+                raise ValueError(f"Empty response from ai_query for {doc_row.file_name}")
+            
+            toc_response = toc_result[0].toc_response
+            
+            # Parse the JSON response
+            import json
+            toc_data = json.loads(toc_response) if isinstance(toc_response, str) else toc_response
+            toc_measures = toc_data.get('measures', []) if isinstance(toc_data, dict) else toc_data
+            
+            print(f"         ✅ Extracted {len(toc_measures)} measures")
+            
+            all_extractions.append({
+                'file_id': doc_row.file_id,
+                'file_name': doc_row.file_name,
+                'effective_year': doc_row.effective_year,
+                'toc_array': toc_measures
+            })
         
-        if not toc_result or not toc_result[0].toc_response:
-            raise ValueError(f"Empty response from ai_query for {doc_row.file_name}")
+        # Summary
+        print(f"\n{'='*80}")
+        print(f"📊 TOC Extraction Summary:")
+        print(f"   Total documents: {total_docs}")
+        print(f"   Successful: {len(all_extractions)}")
+        print(f"{'='*80}\n")
         
-        toc_response = toc_result[0].toc_response
-        
-        # Parse the JSON response
-        import json
-        toc_data = json.loads(toc_response) if isinstance(toc_response, str) else toc_response
-        toc_measures = toc_data.get('measures', []) if isinstance(toc_data, dict) else toc_data
-        
-        print(f"         ✅ Extracted {len(toc_measures)} measures")
-        
-        all_extractions.append({
-            'file_id': doc_row.file_id,
-            'file_name': doc_row.file_name,
-            'effective_year': doc_row.effective_year,
-            'toc_array': toc_measures
-        })
-    
-    # Summary
-    print(f"\n{'='*80}")
-    print(f"📊 TOC Extraction Summary:")
-    print(f"   Total documents: {total_docs}")
-    print(f"   Successful: {len(all_extractions)}")
-    print(f"{'='*80}\n")
-    
-    # Create DataFrame from TOC extractions
-    if all_extractions:
-        from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-        from pyspark.sql.functions import lead, col
-        from pyspark.sql.window import Window
-        
-        # Flatten the array of measures into individual rows
-        all_toc_rows = []
-        for extraction in all_extractions:
-            for measure in extraction['toc_array']:
-                all_toc_rows.append({
-                    'file_id': extraction['file_id'],
-                    'file_name': extraction['file_name'],
-                    'effective_year': extraction['effective_year'],
-                    'measure_acronym': measure.get('measure_acronym') if isinstance(measure, dict) else measure.measure_acronym,
-                    'measure_name': measure.get('measure_name') if isinstance(measure, dict) else measure.measure_name,
-                    'start_page': measure.get('start_page') if isinstance(measure, dict) else measure.start_page
-                })
-        
-        toc_schema = StructType([
-            StructField("file_id", StringType(), False),
-            StructField("file_name", StringType(), False),
-            StructField("effective_year", IntegerType(), False),
-            StructField("measure_acronym", StringType(), False),
-            StructField("measure_name", StringType(), False),
-            StructField("start_page", IntegerType(), True)
-        ])
-        
-        toc_df = spark.createDataFrame(all_toc_rows, schema=toc_schema)
-        
-        # Calculate end_page as (next measure's start_page - 1), null for last measure
-        window_spec = Window.partitionBy("file_id", "file_name").orderBy("start_page")
-        toc_df = toc_df.withColumn(
-            "end_page",
-            lead(col("start_page"), 1).over(window_spec) - 1
-        )
-        
-        toc_df.createOrReplaceTempView("toc_entries")
-        toc_count = toc_df.count()
-        
-        print(f"✅ Created 'toc_entries' table with {toc_count} measure entries")
-        print(f"   Calculated end_page as (next start_page - 1)")
-        
-        if toc_count > 0:
-            display(toc_df)
+        # Create DataFrame from TOC extractions
+        if all_extractions:
+            from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+            from pyspark.sql.functions import lead, col
+            from pyspark.sql.window import Window
+            
+            # Flatten the array of measures into individual rows
+            all_toc_rows = []
+            for extraction in all_extractions:
+                for measure in extraction['toc_array']:
+                    all_toc_rows.append({
+                        'file_id': extraction['file_id'],
+                        'file_name': extraction['file_name'],
+                        'effective_year': extraction['effective_year'],
+                        'measure_acronym': measure.get('measure_acronym') if isinstance(measure, dict) else measure.measure_acronym,
+                        'measure_name': measure.get('measure_name') if isinstance(measure, dict) else measure.measure_name,
+                        'start_page': measure.get('start_page') if isinstance(measure, dict) else measure.start_page
+                    })
+            
+            toc_schema = StructType([
+                StructField("file_id", StringType(), False),
+                StructField("file_name", StringType(), False),
+                StructField("effective_year", IntegerType(), False),
+                StructField("measure_acronym", StringType(), False),
+                StructField("measure_name", StringType(), False),
+                StructField("start_page", IntegerType(), True)
+            ])
+            
+            toc_df = spark.createDataFrame(all_toc_rows, schema=toc_schema)
+            
+            # Calculate end_page as (next measure's start_page - 1), null for last measure
+            window_spec = Window.partitionBy("file_id", "file_name").orderBy("start_page")
+            toc_df = toc_df.withColumn(
+                "end_page",
+                lead(col("start_page"), 1).over(window_spec) - 1
+            )
+            
+            toc_df.createOrReplaceTempView("toc_entries")
+            toc_count = toc_df.count()
+            
+            print(f"✅ Created 'toc_entries' table with {toc_count} measure entries")
+            print(f"   Calculated end_page as (next start_page - 1)")
+            
+            if toc_count > 0:
+                display(toc_df)
+            else:
+                raise ValueError("No TOC entries extracted")
         else:
-            raise ValueError("No TOC entries extracted")
+            raise ValueError("No TOC entries extracted from any document")
     else:
-        raise ValueError("No TOC entries extracted from any document")
-else:
-    raise ValueError("'elements' temp view not found. Please run previous cells first.")
+        raise ValueError("'elements' temp view not found. Please run previous cells first.")
 
 # COMMAND ----------
 
@@ -597,242 +592,6 @@ else:
 # MAGIC **Page Margin**: Extracts elements from ±10 pages around TOC boundaries to handle TOC inaccuracies
 # MAGIC
 # MAGIC **Element Handling**: Includes page headers and footers which provide measure context
-
-# COMMAND ----------
-
-# if file_count > 0 and toc_count > 0:
-#     print("🤖 Running comprehensive AI extraction with ai_query...")
-#     print(f"   Processing {toc_count} measures across {file_count} files")
-#     print(f"   Using ±{PAGE_MARGIN} page margin for TOC inaccuracies\n")
-
-#     # Get list of all TOC entries
-#     toc_entries_list = spark.sql("SELECT * FROM toc_entries ORDER BY file_id, start_page").collect()
-
-#     all_measures = []
-
-#     from tqdm import tqdm
-#     for idx, toc_entry in enumerate(tqdm(toc_entries_list, desc="Extracting measures"), 1):
-#         try:
-#             print(f"\n[{idx}/{toc_count}] 📋 {toc_entry.measure_name}")
-#             print(f"         File: {toc_entry.file_name}")
-#             print(f"         TOC Pages: {toc_entry.start_page}-{toc_entry.end_page}")
-
-#             # Calculate actual page range with margin
-#             page_start_actual = max(1, toc_entry.start_page - PAGE_MARGIN)
-#             page_end_actual = (toc_entry.end_page + PAGE_MARGIN) if toc_entry.end_page else (toc_entry.start_page + 15 + PAGE_MARGIN)
-
-#             print(f"         Actual Pages (with ±{PAGE_MARGIN} margin): {page_start_actual}-{page_end_actual}")
-
-#             # Extract elements for this measure with comprehensive content
-#             measure_extraction_sql = f"""
-#             WITH measure_elements AS (
-#                 -- Extract all elements within page range including headers/footers
-#                 SELECT
-#                     element_type,
-#                     element_content,
-#                     page_number,
-#                     is_page_metadata
-#                 FROM elements
-#                 WHERE file_id = '{toc_entry.file_id}'
-#                   AND page_number >= {page_start_actual}
-#                   AND page_number <= {page_end_actual}
-#                   AND element_content IS NOT NULL
-#                 ORDER BY page_number, is_page_metadata DESC, element_type
-#             ),
-#             structured_content AS (
-#                 -- Group content by type for better context
-#                 SELECT
-#                     concat_ws('\\n\\n',
-#                         concat('=== PAGE HEADERS AND FOOTERS ===\\n',
-#                             concat_ws('\\n',
-#                                 collect_list(
-#                                     CASE WHEN is_page_metadata THEN
-#                                         concat('[', element_type, ' - Page ', page_number, '] ', element_content)
-#                                     END
-#                                 )
-#                             )
-#                         ),
-#                         '\\n\\n=== MEASURE CONTENT ===\\n',
-#                         concat_ws('\\n\\n',
-#                             collect_list(
-#                                 CASE WHEN NOT is_page_metadata THEN
-#                                     concat('[Page ', page_number, '] ', element_content)
-#                                 END
-#                             )
-#                         )
-#                     ) AS full_text,
-#                     count(*) AS element_count,
-#                     count(CASE WHEN is_page_metadata THEN 1 END) AS metadata_count,
-#                     min(page_number) AS first_page,
-#                     max(page_number) AS last_page
-#                 FROM measure_elements
-#             )
-#             SELECT
-#                 uuid() as measure_id,
-#                 '{toc_entry.file_id}' as file_id,
-#                 '{toc_entry.file_name}' as file_name,
-#                 '{toc_entry.measure_acronym}' as measure_acronym,
-#                 '{toc_entry.measure_name}' as measure_name_from_toc,
-#                 {toc_entry.start_page} as page_start,
-#                 {toc_entry.end_page if toc_entry.end_page else 'NULL'} as page_end,
-#                 {page_start_actual} as page_start_actual,
-#                 {page_end_actual} as page_end_actual,
-#                 {toc_entry.effective_year} as effective_year,
-#                 current_timestamp() as extraction_timestamp,
-#                 full_text,
-#                 element_count,
-#                 metadata_count,
-#                 substring(full_text, 1, 5000) as source_text_preview,
-#                 ai_query(
-#                     '{model_endpoint}',
-#                     concat(
-#                         'You are extracting HEDIS measure definitions from official NCQA documentation. ',
-#                         'Extract the raw text content as it appears in the document elements. ',
-#                         'Page headers and footers contain important context about the measure name and acronym.\\n\\n',
-#                         'Extract the following fields as RAW TEXT (not summarized, not restructured):\\n',
-#                         '1. measure: The official measure name with standard acronym (e.g., "AMM - Antidepressant Medication Management")\\n',
-#                         '2. initial_pop: The initial population definition text - extract the complete text that defines who is initially identified for this measure\\n',
-#                         '3. denominator: The denominator definition text - extract the complete text that defines the denominator criteria\\n',
-#                         '4. numerator: The numerator definition text - extract the complete text that defines numerator compliance criteria\\n',
-#                         '5. exclusion: The exclusion criteria text - extract the complete text that defines exclusions\\n',
-#                         '6. effective_year: The year this measure is effective (extract from document or use {toc_entry.effective_year})\\n\\n',
-#                         'IMPORTANT INSTRUCTIONS:\\n',
-#                         '- Return the text AS-IS from the elements, do not restructure into lists or bullet points\\n',
-#                         '- Extract complete sections, not just summaries\\n',
-#                         '- Maintain accuracy - wrong information impacts patient care\\n',
-#                         '- Use page headers/footers to verify you are extracting the correct measure\\n',
-#                         '- If a section is not found, return empty string\\n\\n',
-#                         'Document content:\\n\\n',
-#                         full_text
-#                     ),
-#                     responseFormat => '{{
-#                         "type": "json_schema",
-#                         "json_schema": {{
-#                             "name": "hedis_measure_definition",
-#                             "strict": true,
-#                             "schema": {{
-#                                 "type": "object",
-#                                 "properties": {{
-#                                     "measure": {{"type": "string"}},
-#                                     "initial_pop": {{"type": "string"}},
-#                                     "denominator": {{"type": "string"}},
-#                                     "numerator": {{"type": "string"}},
-#                                     "exclusion": {{"type": "string"}},
-#                                     "effective_year": {{"type": "integer"}}
-#                                 }},
-#                                 "required": ["measure", "initial_pop", "denominator", "numerator", "exclusion", "effective_year"],
-#                                 "additionalProperties": false
-#                             }}
-#                         }}
-#                     }}'
-#                 ) AS extracted_json
-#             FROM structured_content
-#             WHERE length(full_text) > 100
-#             """
-
-#             # Execute extraction
-#             result = spark.sql(measure_extraction_sql).collect()
-
-#             if result:
-#                 measure_result = result[0]
-
-#                 print(f"         Elements: {measure_result.element_count} total ({measure_result.metadata_count} headers/footers)")
-#                 print(f"         Text length: {len(measure_result.full_text):,} characters")
-#                 print(f"         ✅ Extraction complete")
-
-#                 # Parse JSON response
-#                 import json
-#                 extracted_data = json.loads(measure_result.extracted_json) if isinstance(measure_result.extracted_json, str) else measure_result.extracted_json
-
-#                 # Create record with parsed fields (all text fields)
-#                 measure_record = {
-#                     'measure_id': measure_result.measure_id,
-#                     'file_id': measure_result.file_id,
-#                     'file_name': measure_result.file_name,
-#                     'measure_acronym': measure_result.measure_acronym,
-#                     'measure': extracted_data.get('measure', measure_result.measure_name_from_toc),
-#                     'initial_pop': extracted_data.get('initial_pop', ''),
-#                     'denominator': extracted_data.get('denominator', ''),
-#                     'numerator': extracted_data.get('numerator', ''),
-#                     'exclusion': extracted_data.get('exclusion', ''),
-#                     'effective_year': extracted_data.get('effective_year', measure_result.effective_year),
-#                     'page_start': measure_result.page_start,
-#                     'page_end': measure_result.page_end,
-#                     'page_start_actual': measure_result.page_start_actual,
-#                     'page_end_actual': measure_result.page_end_actual,
-#                     'extraction_timestamp': measure_result.extraction_timestamp,
-#                     'extracted_json': measure_result.extracted_json,
-#                     'source_text_preview': measure_result.source_text_preview
-#                 }
-
-#                 all_measures.append(measure_record)
-
-#         except Exception as e:
-#             print(f"         ❌ Failed to extract: {str(e)}")
-#             import traceback
-#             traceback.print_exc()
-#             continue
-
-#     # Create DataFrame from extracted measures
-#     if all_measures:
-#         from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
-
-#         # Define schema matching the silver table (all text fields are strings)
-#         measures_schema = StructType([
-#             StructField("measure_id", StringType(), False),
-#             StructField("file_id", StringType(), False),
-#             StructField("file_name", StringType(), True),
-#             StructField("measure_acronym", StringType(), True),
-#             StructField("measure", StringType(), False),
-#             StructField("initial_pop", StringType(), True),
-#             StructField("denominator", StringType(), True),
-#             StructField("numerator", StringType(), True),
-#             StructField("exclusion", StringType(), True),
-#             StructField("effective_year", IntegerType(), False),
-#             StructField("page_start", IntegerType(), True),
-#             StructField("page_end", IntegerType(), True),
-#             StructField("page_start_actual", IntegerType(), True),
-#             StructField("page_end_actual", IntegerType(), True),
-#             StructField("extraction_timestamp", TimestampType(), True),
-#             StructField("extracted_json", StringType(), True),
-#             StructField("source_text_preview", StringType(), True)
-#         ])
-
-#         measures_df = spark.createDataFrame(all_measures, schema=measures_schema)
-#         measure_count = measures_df.count()
-
-#         print(f"\n{'='*80}")
-#         print(f"✅ Extraction Summary:")
-#         print(f"   Total measures extracted: {measure_count}")
-#         print(f"   Files processed: {file_count}")
-#         print(f"{'='*80}\n")
-
-#         # Create temp view for merge
-#         measures_df.createOrReplaceTempView("extracted_measures")
-
-#         # Display sample with text lengths
-#         print("Sample of extracted measures:")
-#         display(measures_df.select(
-#             "measure_acronym",
-#             "measure",
-#             "effective_year",
-#             "page_start",
-#             "page_end",
-#             "page_start_actual",
-#             "page_end_actual",
-#             F.length("denominator").alias("denom_length"),
-#             F.length("numerator").alias("numer_length"),
-#             F.length("exclusion").alias("excl_length")
-#         ).limit(10))
-#     else:
-#         measure_count = 0
-#         print("\n⚠️  No measures extracted")
-# else:
-#     measure_count = 0
-#     if file_count == 0:
-#         print("⚠️  No files to process")
-#     elif toc_count == 0:
-#         print("⚠️  No TOC entries found")
 
 # COMMAND ----------
 
@@ -1170,7 +929,7 @@ if file_count > 0 and toc_count > 0 and measure_count > 0:
             )
     """)
 
-    # result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
+    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
     print(f"✅ Wrote {measure_count} measures to silver table (MERGE)")
     print(f"   Total measures in table: {result_count}")
 
