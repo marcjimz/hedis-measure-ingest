@@ -1,0 +1,197 @@
+{
+  "evaluation_dataset": {
+    "name": "HEDIS Measure QnA Evaluation Dataset",
+    "description": "Comprehensive evaluation dataset with 20 queries testing HEDIS measure understanding, compliance checking, and definition retrieval",
+    "version": "1.0",
+    "created_date": "2025-11-07",
+    "total_queries": 20
+  },
+  "queries": [
+    {
+      "id": 1,
+      "query": "What is the AMM measure and what does it assess?",
+      "expected_answer": "AMM stands for Antidepressant Medication Management. It assesses the percentage of members 18 years and older with a diagnosis of major depression who were treated with antidepressant medication and remained on the medication for at least 84 days (12 weeks) for the acute phase treatment, and at least 180 days (6 months) for the continuation phase treatment. The measure has two rates: effective acute phase treatment (84+ days) and effective continuation phase treatment (180+ days).",
+      "measure_type": "AMM",
+      "difficulty": "easy",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 2,
+      "query": "A 45-year-old woman had a mammogram on March 15, 2024. Does this meet the BCS measure requirements for breast cancer screening?",
+      "expected_answer": "BCS (Breast Cancer Screening) measures the percentage of women aged 50-74 who had a mammogram to screen for breast cancer during the measurement year or the year prior to the measurement year. A 45-year-old woman would NOT meet the BCS measure requirements because she is below the minimum age of 50 years required for the measure. The measure specifically targets women aged 50-74 years.",
+      "measure_type": "BCS",
+      "difficulty": "medium",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 3,
+      "query": "What are the denominator criteria for the CDC measure?",
+      "expected_answer": "The CDC (Comprehensive Diabetes Care) measure has multiple indicators. The denominator for CDC includes members aged 18-75 years as of December 31 of the measurement year who had a diagnosis of diabetes (type 1 or type 2) during the measurement year or the year prior to the measurement year. Exclusions may include members with polycystic ovarian syndrome, gestational diabetes, or steroid-induced diabetes without a diagnosis of diabetes, as well as members in hospice or receiving palliative care.",
+      "measure_type": "CDC",
+      "difficulty": "medium",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 4,
+      "query": "For the CBP measure, what blood pressure reading qualifies as controlled hypertension?",
+      "expected_answer": "For the CBP (Controlling High Blood Pressure) measure, controlled hypertension is defined as a blood pressure reading of <140/90 mmHg. The measure assesses the percentage of members aged 18-85 years with a diagnosis of hypertension whose blood pressure was adequately controlled (<140/90 mmHg) during the measurement year based on the most recent blood pressure reading.",
+      "measure_type": "CBP",
+      "difficulty": "easy",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 5,
+      "query": "A 67-year-old patient with diabetes had an HbA1c test result of 8.2% in November 2024. Does this meet the numerator for the CDC HbA1c control measure?",
+      "expected_answer": "For the CDC (Comprehensive Diabetes Care) HbA1c control indicator, good control is typically defined as HbA1c <8.0%. An HbA1c result of 8.2% would NOT meet the numerator for good glycemic control (HbA1c <8.0%), though it would count toward the numerator for HbA1c poor control (>9.0%) being false. The patient had the required HbA1c test performed, which satisfies the HbA1c testing component, but the value indicates suboptimal control.",
+      "measure_type": "CDC",
+      "difficulty": "hard",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 6,
+      "query": "What are the exclusion criteria for the COL measure?",
+      "expected_answer": "The COL (Colorectal Cancer Screening) measure excludes members who have had a total colectomy or colorectal cancer. Additional exclusions include members in hospice, receiving palliative care, or with advanced illness and limited life expectancy. Members with evidence of total colectomy, colorectal cancer diagnosis, or terminal illness are excluded from the denominator as screening would not be appropriate for these populations.",
+      "measure_type": "COL",
+      "difficulty": "medium",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 7,
+      "query": "What is the age range for the CIS measure and what vaccinations are included?",
+      "expected_answer": "The CIS (Childhood Immunization Status) measure assesses children who turn 2 years old during the measurement year and have received all required vaccinations by their second birthday. The measure includes: 4 DTaP/DT vaccines, 3 IPV vaccines, 1 MMR vaccine, 3 Hib vaccines, 3 Hepatitis B vaccines, 1 VZV (chickenpox) vaccine, 4 pneumococcal conjugate vaccines, 1 Hepatitis A vaccine, 2 or 3 rotavirus vaccines (depending on vaccine type), and 2 influenza vaccines. The measure reports 10 separate vaccination rates plus combination rates.",
+      "measure_type": "CIS",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 8,
+      "query": "A pregnant woman had her first prenatal visit at 15 weeks gestation. Does this meet the timeliness component for prenatal care measures?",
+      "expected_answer": "For the prenatal care measure (typically PPC - Prenatal and Postpartum Care), timely prenatal care is defined as a prenatal visit occurring in the first trimester (within the first 13 weeks of pregnancy) or within 42 days of enrollment in the health plan if enrollment occurs during the first trimester. A first prenatal visit at 15 weeks gestation (second trimester) would NOT meet the timeliness component for first trimester prenatal care, as it exceeds the 13-week cutoff for the first trimester.",
+      "measure_type": "PPC",
+      "difficulty": "medium",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 9,
+      "query": "What is the difference between the numerator and denominator for the W15 measure?",
+      "expected_answer": "The W15 (Well-Child Visits in the First 30 Months of Life) measure has a denominator that includes children who turned 15 months old during the measurement year and were continuously enrolled with no more than one gap in enrollment of up to 45 days from birth to 15 months. The numerator includes children from the denominator who had six or more well-child visits with a primary care physician (PCP) during their first 15 months of life. The measure assesses whether children receive the recommended number of well-child visits for preventive care and developmental monitoring during this critical period.",
+      "measure_type": "W15",
+      "difficulty": "medium",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 10,
+      "query": "A member with major depression started antidepressant medication on June 1st and continued taking it through August 30th (90 days total). Do they meet the AMM acute phase numerator?",
+      "expected_answer": "For the AMM (Antidepressant Medication Management) acute phase treatment numerator, members must remain on antidepressant medication for at least 84 days (12 weeks). A member who took medication from June 1st through August 30th has completed 90 days of continuous treatment, which exceeds the 84-day requirement. Therefore, YES, this member DOES meet the AMM acute phase numerator criteria for effective acute phase treatment.",
+      "measure_type": "AMM",
+      "difficulty": "easy",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 11,
+      "query": "What tests or procedures satisfy the numerator for the COL measure?",
+      "expected_answer": "The COL (Colorectal Cancer Screening) numerator can be satisfied by any of the following screening methods: (1) Fecal occult blood test (FOBT) or fecal immunochemical test (FIT) during the measurement year, (2) FIT-DNA test during the measurement year or the two years prior, (3) Flexible sigmoidoscopy during the measurement year or the four years prior, (4) CT colonography (virtual colonoscopy) during the measurement year or the four years prior, or (5) Colonoscopy during the measurement year or the nine years prior. Each screening method has different look-back periods based on clinical guidelines for screening intervals.",
+      "measure_type": "COL",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 12,
+      "query": "Explain the initial population for the ADD measure.",
+      "expected_answer": "The ADD (Follow-Up Care for Children Prescribed ADHD Medication) measure has an initial population consisting of children aged 6-12 years as of the Index Prescription Start Date (IPSD) who were dispensed a new ADHD medication during the Intake Period (March 1 through September 30 of the measurement year). A 'new' prescription means the member had no ADHD medication fills in the 120 days prior to the IPSD. The member must also have been continuously enrolled for 120 days prior to the IPSD and for 300 days after the IPSD with allowable gaps.",
+      "measure_type": "ADD",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 13,
+      "query": "A 72-year-old woman had a colonoscopy in 2018. Does she need another colorectal screening test to meet the COL measure in 2024?",
+      "expected_answer": "For the COL (Colorectal Cancer Screening) measure, a colonoscopy is valid for 10 years. A colonoscopy performed in 2018 would still be valid for the 2024 measurement year (6 years later), as it falls within the 10-year look-back period (measurement year plus 9 years prior). Therefore, NO, the 72-year-old woman does NOT need another colorectal screening test to meet the COL measure in 2024 - her 2018 colonoscopy satisfies the numerator requirement.",
+      "measure_type": "COL",
+      "difficulty": "medium",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 14,
+      "query": "What are the two rates reported for the AMM measure and how do they differ?",
+      "expected_answer": "The AMM (Antidepressant Medication Management) measure reports two rates: (1) Effective Acute Phase Treatment - the percentage of members who remained on antidepressant medication for at least 84 days (12 weeks) following the diagnosis, and (2) Effective Continuation Phase Treatment - the percentage of members who remained on antidepressant medication for at least 180 days (6 months) following the diagnosis. The key difference is the duration: 84 days for acute phase versus 180 days for continuation phase. Both rates use the same denominator (members with major depression newly treated with antidepressants), but measure different treatment duration thresholds aligned with clinical practice guidelines.",
+      "measure_type": "AMM",
+      "difficulty": "medium",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 15,
+      "query": "For the CDC measure, what constitutes an eye exam for diabetic retinopathy screening?",
+      "expected_answer": "For the CDC (Comprehensive Diabetes Care) eye exam indicator, the numerator is met by a retinal or dilated eye exam performed by an eye care professional (optometrist or ophthalmologist) during the measurement year or the year prior to the measurement year. The exam must be sufficient to assess for diabetic retinopathy. Acceptable documentation includes: (1) evidence of retinal or dilated eye exam with results documented, (2) a negative retinal or dilated eye exam result, (3) evidence that the member is being treated for diabetic retinopathy, or (4) a photograph of the retina showing evidence of diabetic retinopathy. A basic vision screening is NOT sufficient.",
+      "measure_type": "CDC",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 16,
+      "query": "A 35-year-old male with type 2 diabetes is receiving hospice care. Should he be included in the CDC measure denominator?",
+      "expected_answer": "NO, a member receiving hospice care should be EXCLUDED from the CDC (Comprehensive Diabetes Care) measure denominator. Members in hospice or receiving palliative care are excluded from the measure because the focus of their care has shifted from disease management and prevention to comfort care and quality of life. These exclusions recognize that aggressive diabetes management and screening may not be appropriate or aligned with the member's goals of care in the hospice setting.",
+      "measure_type": "CDC",
+      "difficulty": "medium",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 17,
+      "query": "What is the purpose of the BCS-E measure and how does it differ from standard BCS?",
+      "expected_answer": "BCS-E (Breast Cancer Screening - ECDS) is an alternative measure to standard BCS that uses the NCQA Electronic Clinical Data Systems (ECDS) methodology for data collection. While both BCS and BCS-E assess the same clinical concept (breast cancer screening in women aged 50-74), BCS-E allows for electronic data extraction directly from electronic health records (EHRs) and other electronic sources, rather than relying on administrative claims data. BCS-E may provide more comprehensive capture of screening events and reduce documentation burden, while maintaining the same age group (50-74 years) and screening criteria (mammography within 27 months).",
+      "measure_type": "BCS",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 18,
+      "query": "A 6-year-old child started ADHD medication on August 15, 2024, and had follow-up visits on September 1 and December 20. Does this meet the ADD measure requirements?",
+      "expected_answer": "The ADD (Follow-Up Care for Children Prescribed ADHD Medication) measure requires two rates: (1) Initiation Phase - at least one follow-up visit within 30 days of the IPSD (Index Prescription Start Date), and (2) Continuation and Maintenance Phase - at least two follow-up visits within 270-300 days after the IPSD. For the August 15 IPSD: the September 1 visit (17 days later) MEETS the Initiation Phase requirement (within 30 days). The December 20 visit (127 days later) is within the continuation period, but only ONE visit is documented in the continuation phase, while TWO are required. Therefore, this meets the Initiation Phase numerator but does NOT meet the Continuation and Maintenance Phase numerator (needs one additional visit between days 31-300).",
+      "measure_type": "ADD",
+      "difficulty": "hard",
+      "scenario_type": "compliance_check"
+    },
+    {
+      "id": 19,
+      "query": "What blood pressure threshold defines hypertension diagnosis for the CBP measure, and what threshold defines control?",
+      "expected_answer": "For the CBP (Controlling High Blood Pressure) measure, the diagnosis of hypertension is based on ICD-10 diagnosis codes or documentation of hypertension in the medical record - there is not a specific blood pressure threshold for diagnosis inclusion in the denominator. However, for the NUMERATOR (adequate control), the blood pressure must be <140/90 mmHg based on the most recent blood pressure reading during the measurement year. The measure focuses on whether members with a hypertension diagnosis have their blood pressure adequately controlled to this target, regardless of what their initial blood pressure was at diagnosis.",
+      "measure_type": "CBP",
+      "difficulty": "medium",
+      "scenario_type": "definition_lookup"
+    },
+    {
+      "id": 20,
+      "query": "A health plan wants to improve their CDC HbA1c testing rate. What strategies might help increase the numerator for this indicator?",
+      "expected_answer": "To improve the CDC (Comprehensive Diabetes Care) HbA1c testing numerator, strategies include: (1) Implementing standing orders or protocols for annual HbA1c testing for all diabetic patients, (2) Using registry-based population health management to identify members due for testing, (3) Enabling point-of-care HbA1c testing in primary care offices for immediate results, (4) Sending patient reminders through portals, text messages, or phone calls, (5) Providing provider feedback on their HbA1c testing rates compared to peers, (6) Integrating HbA1c testing into routine diabetes visits through clinical decision support in the EHR, (7) Offering lab services at convenient locations or times to reduce barriers, and (8) Care coordinator outreach to engage members who have not had testing. The measure numerator requires at least one HbA1c test during the measurement year.",
+      "measure_type": "CDC",
+      "difficulty": "hard",
+      "scenario_type": "definition_lookup"
+    }
+  ],
+  "measure_coverage": {
+    "AMM": 3,
+    "BCS": 2,
+    "CDC": 6,
+    "CBP": 2,
+    "COL": 3,
+    "CIS": 1,
+    "PPC": 1,
+    "W15": 1,
+    "ADD": 2
+  },
+  "difficulty_distribution": {
+    "easy": 3,
+    "medium": 9,
+    "hard": 8
+  },
+  "scenario_type_distribution": {
+    "definition_lookup": 12,
+    "compliance_check": 8
+  },
+  "metadata": {
+    "notes": "This evaluation dataset covers major HEDIS measures with a balanced mix of definition lookups and compliance scenarios. Queries range from simple measure definitions to complex multi-part compliance assessments requiring understanding of numerators, denominators, exclusions, and time periods.",
+    "usage": "Use this dataset to evaluate RAG systems, QnA agents, or LLMs designed to answer questions about HEDIS quality measures. Expected answers provide comprehensive context for automated evaluation using LLM-as-judge or human review.",
+    "effective_year": 2025,
+    "source": "NCQA HEDIS Measurement Year 2025 Volume 2 Technical Specifications"
+  }
+}

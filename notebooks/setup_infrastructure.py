@@ -6,6 +6,7 @@
 # MAGIC - Unity Catalog (Catalog + Schema)
 # MAGIC - Volume for storing HEDIS PDFs
 # MAGIC - Vector Search Endpoint
+# MAGIC - Lakebase PostgreSQL Instance (Optional)
 # MAGIC - Delta Tables (Bronze + Silver)
 # MAGIC
 # MAGIC **Run this notebook FIRST** before executing the pipeline notebooks.
@@ -16,9 +17,10 @@
 # MAGIC 2. **Schema**: Database within catalog
 # MAGIC 3. **Volume**: Managed storage for HEDIS PDFs
 # MAGIC 4. **Vector Search Endpoint**: For semantic search
-# MAGIC 5. **Bronze Table**: `hedis_file_metadata`
-# MAGIC 6. **Silver Table 1**: `hedis_measures_definitions`
-# MAGIC 7. **Silver Table 2**: `hedis_measures_chunks`
+# MAGIC 5. **Lakebase PostgreSQL Instance** (Optional): For conversation history persistence
+# MAGIC 6. **Bronze Table**: `hedis_file_metadata`
+# MAGIC 7. **Silver Table 1**: `hedis_measures_definitions`
+# MAGIC 8. **Silver Table 2**: `hedis_measures_chunks`
 
 # COMMAND ----------
 
@@ -42,12 +44,16 @@ dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
+dbutils.widgets.dropdown("create_lakebase", "No", ["Yes", "No"], "Create Lakebase Instance")
+dbutils.widgets.text("lakebase_instance_name", "hedis-lakebase-instance", "Lakebase Instance Name")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
 vector_endpoint_name = dbutils.widgets.get("vector_search_endpoint")
+create_lakebase = dbutils.widgets.get("create_lakebase") == "Yes"
+lakebase_instance_name = dbutils.widgets.get("lakebase_instance_name")
 
 # Display configuration
 print("🔧 Infrastructure Configuration:")
@@ -56,6 +62,9 @@ print(f"Catalog:         {catalog_name}")
 print(f"Schema:          {schema_name}")
 print(f"Volume:          {volume_name}")
 print(f"Vector Endpoint: {vector_endpoint_name}")
+print(f"Create Lakebase: {'Yes' if create_lakebase else 'No'}")
+if create_lakebase:
+    print(f"Lakebase Instance: {lakebase_instance_name}")
 print("=" * 60)
 print("\n💡 Infrastructure will be created only if it doesn't already exist")
 print("=" * 60)
@@ -264,6 +273,163 @@ except Exception:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Step 4.5: Create Lakebase PostgreSQL Instance (Optional)
+# MAGIC
+# MAGIC **Optional**: Create a Lakebase PostgreSQL database instance for conversation history persistence.
+# MAGIC This is required if you want to enable stateful conversations with the HEDIS agent.
+# MAGIC
+# MAGIC **Note**: Instance creation may take 5-10 minutes. The instance needs to be in "ONLINE" state before use.
+
+# COMMAND ----------
+
+if create_lakebase:
+    print(f"🔍 Checking if Lakebase instance exists: {lakebase_instance_name}")
+
+    # Check if instance already exists
+    try:
+        existing_instance = w.database.get_database_instance(name=lakebase_instance_name)
+        instance_state = existing_instance.state.value if existing_instance.state else 'Unknown'
+        print(f"✅ Instance already exists: {lakebase_instance_name}")
+        print(f"   Status: {instance_state}")
+
+        if instance_state != "ONLINE":
+            print(f"⚠️  Instance is not online yet. Current state: {instance_state}")
+            print("   It may still be provisioning. Check back in a few minutes.")
+        else:
+            # Instance is online, try to setup checkpointer tables
+            print("\n🔧 Setting up PostgresSaver checkpointer tables...")
+            try:
+                import sys
+                sys.path.append("../src")
+
+                from database.lakebase import LakebaseDatabase
+                import os
+
+                # Get credentials
+                host = w.config.host
+                client_id = os.getenv("DATABRICKS_CLIENT_ID")
+
+                if not client_id:
+                    print("⚠️  DATABRICKS_CLIENT_ID not set. Skipping checkpointer setup.")
+                    print("   Set this environment variable to enable checkpointer table creation.")
+                else:
+                    # Initialize Lakebase connection
+                    lakebase_db = LakebaseDatabase(host=host)
+
+                    # Initialize connection with checkpointer setup
+                    conn_string = lakebase_db.initialize_connection(
+                        user=client_id,
+                        instance_name=lakebase_instance_name,
+                        database="databricks_postgres",
+                        setup_checkpointer=True
+                    )
+
+                    print(f"✅ PostgresSaver tables created successfully!")
+                    print(f"   Instance: {lakebase_instance_name}")
+                    print(f"   Database: databricks_postgres")
+
+            except Exception as e:
+                if "already exists" in str(e).lower() or "relation" in str(e).lower():
+                    print(f"✅ PostgresSaver tables already exist")
+                else:
+                    print(f"⚠️  Could not setup checkpointer tables: {str(e)}")
+                    print("   You can setup tables manually later if needed")
+
+    except Exception:
+        # Instance doesn't exist, create it
+        print(f"🏗️  Instance not found, creating: {lakebase_instance_name}")
+        print("   ⏳ This may take 5-10 minutes...")
+
+        try:
+            from databricks.sdk.service.database import CreateDatabaseInstanceRequest
+
+            # Create the database instance
+            w.database.create_database_instance(
+                request=CreateDatabaseInstanceRequest(
+                    name=lakebase_instance_name,
+                    instance_type="POSTGRESQL"
+                )
+            )
+
+            print(f"✅ Instance creation initiated: {lakebase_instance_name}")
+            print("   Waiting for instance to come online...")
+
+            # Wait for instance to be ready
+            max_wait = 600  # 10 minutes
+            start_time = time.time()
+
+            while time.time() - start_time < max_wait:
+                try:
+                    instance = w.database.get_database_instance(name=lakebase_instance_name)
+                    state = instance.state.value if instance.state else 'Unknown'
+
+                    elapsed = int(time.time() - start_time)
+                    print(f"   Status: {state} (elapsed: {elapsed}s)")
+
+                    if state == "ONLINE":
+                        print(f"✅ Instance is online: {lakebase_instance_name}")
+
+                        # Setup checkpointer tables
+                        print("\n🔧 Setting up PostgresSaver checkpointer tables...")
+                        try:
+                            import sys
+                            sys.path.append("../src")
+
+                            from database.lakebase import LakebaseDatabase
+                            import os
+
+                            # Get credentials
+                            host = w.config.host
+                            client_id = os.getenv("DATABRICKS_CLIENT_ID")
+
+                            if not client_id:
+                                print("⚠️  DATABRICKS_CLIENT_ID not set. Skipping checkpointer setup.")
+                                print("   Set this environment variable to enable checkpointer table creation.")
+                            else:
+                                # Initialize Lakebase connection
+                                lakebase_db = LakebaseDatabase(host=host)
+
+                                # Initialize connection with checkpointer setup
+                                conn_string = lakebase_db.initialize_connection(
+                                    user=client_id,
+                                    instance_name=lakebase_instance_name,
+                                    database="databricks_postgres",
+                                    setup_checkpointer=True
+                                )
+
+                                print(f"✅ PostgresSaver tables created successfully!")
+                                print(f"   Instance: {lakebase_instance_name}")
+                                print(f"   Database: databricks_postgres")
+
+                        except Exception as e:
+                            print(f"⚠️  Could not setup checkpointer tables: {str(e)}")
+                            print("   You can setup tables manually later if needed")
+
+                        break
+                    elif state in ["OFFLINE", "PROVISIONING"]:
+                        time.sleep(30)  # Check every 30 seconds
+                    else:
+                        print(f"⚠️  Unexpected state: {state}")
+                        break
+                except Exception as e:
+                    elapsed = int(time.time() - start_time)
+                    print(f"   Waiting... ({elapsed}s)")
+                    time.sleep(30)
+            else:
+                print("⚠️  Instance creation timed out (10 minutes), but it may still be provisioning")
+                print(f"   Check status with: w.database.get_database_instance('{lakebase_instance_name}')")
+
+        except Exception as e:
+            print(f"❌ Lakebase instance creation failed: {str(e)}")
+            print("   You can create it manually later or skip persistence features")
+            print("   Continuing with setup...")
+else:
+    print("⏭️  Lakebase instance creation skipped (create_lakebase = No)")
+    print("   To enable persistence features, set 'Create Lakebase Instance' widget to 'Yes'")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Step 5: Create Delta Tables
 # MAGIC
 # MAGIC Creates three tables:
@@ -429,6 +595,20 @@ try:
         print(f"⚠️  Vector Search endpoint exists but not online: {vector_endpoint_name} (Status: {state})")
 except Exception as e:
     print(f"⚠️  Vector Search endpoint not found: {vector_endpoint_name}")
+
+# Check Lakebase instance
+if create_lakebase:
+    try:
+        instance = w.database.get_database_instance(name=lakebase_instance_name)
+        state = instance.state.value if instance.state else 'Unknown'
+        if state == "ONLINE":
+            print(f"✅ Lakebase instance online: {lakebase_instance_name}")
+        else:
+            print(f"⚠️  Lakebase instance exists but not online: {lakebase_instance_name} (Status: {state})")
+    except Exception as e:
+        print(f"⚠️  Lakebase instance not found: {lakebase_instance_name}")
+else:
+    print(f"⏭️  Lakebase instance creation was skipped")
 
 # Check tables
 tables_to_check = [
