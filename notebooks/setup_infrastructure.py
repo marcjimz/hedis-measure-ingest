@@ -45,7 +45,7 @@ dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
 dbutils.widgets.dropdown("create_lakebase", "No", ["Yes", "No"], "Create Lakebase Instance")
-dbutils.widgets.text("lakebase_instance_name", "hedis_agent_pg", "Lakebase Instance Name")
+dbutils.widgets.text("lakebase_instance_name", "hedis-agent-pg", "Lakebase Instance Name")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
