@@ -288,11 +288,12 @@ if create_lakebase:
     # Check if instance already exists
     try:
         existing_instance = w.database.get_database_instance(name=lakebase_instance_name)
-        instance_state = existing_instance.state.value if existing_instance.state else 'Unknown'
+        # Convert enum to string for comparison
+        instance_state = str(existing_instance.state).split('.')[-1] if existing_instance.state else 'UNKNOWN'
         print(f"✅ Instance already exists: {lakebase_instance_name}")
         print(f"   Status: {instance_state}")
 
-        if instance_state != "ONLINE":
+        if instance_state != "AVAILABLE":
             print(f"⚠️  Instance is not online yet. Current state: {instance_state}")
             print("   It may still be provisioning. Check back in a few minutes.")
         else:
@@ -341,13 +342,13 @@ if create_lakebase:
         print("   ⏳ This may take 5-10 minutes...")
 
         try:
-            from databricks.sdk.service.database import CreateDatabaseInstanceRequest
+            from databricks.sdk.service.database import DatabaseInstance
 
             # Create the database instance
             w.database.create_database_instance(
-                request=CreateDatabaseInstanceRequest(
+                DatabaseInstance(
                     name=lakebase_instance_name,
-                    instance_type="POSTGRESQL"
+                    capacity="CU_4"  # 4 Compute Units
                 )
             )
 
@@ -361,12 +362,13 @@ if create_lakebase:
             while time.time() - start_time < max_wait:
                 try:
                     instance = w.database.get_database_instance(name=lakebase_instance_name)
-                    state = instance.state.value if instance.state else 'Unknown'
+                    # Convert enum to string for comparison
+                    state_str = str(instance.state).split('.')[-1] if instance.state else 'UNKNOWN'
 
                     elapsed = int(time.time() - start_time)
-                    print(f"   Status: {state} (elapsed: {elapsed}s)")
+                    print(f"   Status: {state_str} (elapsed: {elapsed}s)")
 
-                    if state == "ONLINE":
+                    if state_str == "AVAILABLE":
                         print(f"✅ Instance is online: {lakebase_instance_name}")
 
                         # Setup checkpointer tables
@@ -406,10 +408,10 @@ if create_lakebase:
                             print("   You can setup tables manually later if needed")
 
                         break
-                    elif state in ["OFFLINE", "PROVISIONING"]:
+                    elif state_str in ["OFFLINE", "PROVISIONING", "CREATING"]:
                         time.sleep(30)  # Check every 30 seconds
                     else:
-                        print(f"⚠️  Unexpected state: {state}")
+                        print(f"⚠️  Unexpected state: {state_str}")
                         break
                 except Exception as e:
                     elapsed = int(time.time() - start_time)
@@ -601,11 +603,11 @@ except Exception as e:
 if create_lakebase:
     try:
         instance = w.database.get_database_instance(name=lakebase_instance_name)
-        state = instance.state.value if instance.state else 'Unknown'
-        if state == "ONLINE":
+        state_str = str(instance.state).split('.')[-1] if instance.state else 'UNKNOWN'
+        if state_str == "AVAILABLE":
             print(f"✅ Lakebase instance online: {lakebase_instance_name}")
         else:
-            print(f"⚠️  Lakebase instance exists but not online: {lakebase_instance_name} (Status: {state})")
+            print(f"⚠️  Lakebase instance exists but not online: {lakebase_instance_name} (Status: {state_str})")
     except Exception as e:
         print(f"⚠️  Lakebase instance not found: {lakebase_instance_name}")
 else:
