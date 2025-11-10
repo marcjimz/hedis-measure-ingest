@@ -183,6 +183,9 @@ except Exception:
         """)
         print(f"✅ Volume created: {volume_path}")
 
+        import time
+        time.sleep(5)
+
         # Display volume info
         volume_info = spark.sql(f"DESCRIBE VOLUME {catalog_name}.{schema_name}.{volume_name}").collect()
         print("\n📁 Volume Details:")
@@ -628,3 +631,7 @@ for table_name in tables_to_check:
         print(f"❌ Table not found: {catalog_name}.{schema_name}.{table_name}")
 
 print("=" * 60)
+
+# COMMAND ----------
+
+
