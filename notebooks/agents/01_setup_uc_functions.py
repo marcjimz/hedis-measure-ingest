@@ -30,8 +30,8 @@
 dbutils.widgets.text("catalog", "main", "Catalog")
 dbutils.widgets.text("schema", "hedis_measurements", "Schema")
 dbutils.widgets.text("vs_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("vs_index_name", "hedis_measures_chunks", "Vector Search Index Name")
-dbutils.widgets.text("llm_endpoint", "databricks-meta-llama-3-1-70b-instruct", "LLM Endpoint")
+dbutils.widgets.text("vs_index_name", "hedis_measures_index", "Vector Search Index Name")
+dbutils.widgets.text("llm_endpoint", "databricks-claude-opus-4-1", "LLM Endpoint")
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
@@ -111,7 +111,7 @@ print(f"Created: {CATALOG}.{SCHEMA}.measures_definition_lookup")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Create measures_document_search (Python UDF)
+# MAGIC ## 2. Create measures_document_search
 # MAGIC
 # MAGIC Simple Python UDF for semantic search over HEDIS chunks.
 
@@ -251,46 +251,113 @@ display(expansions)
 
 # COMMAND ----------
 
-# Test measures_document_search with expanded queries
-print("\nTesting measures_document_search with AI-generated query expansions...")
-
-# Get expansions
-expansions_list = expansions.collect()
-
-if len(expansions_list) > 0:
-    # Use first expansion for demonstration
-    first_expansion = expansions_list[0].expanded_query
-    print(f"\nUsing expanded query: '{first_expansion}'")
-
-    result = spark.sql(f"""
-        SELECT score, chunk_content, page_start, page_end, effective_year
-        FROM {CATALOG}.{SCHEMA}.measures_document_search('{first_expansion}', 3, NULL)
-    """)
-
-    print(f"\nFound {result.count()} results:")
-    display(result)
-else:
-    print("No expansions generated, using original query...")
-    result = spark.sql(f"""
-        SELECT score, chunk_content, page_start, page_end, effective_year
-        FROM {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 3, NULL)
-    """)
-    display(result)
+# MAGIC %sql
+# MAGIC select *
+# MAGIC from marcin_demo.hedis_measurements.measures_document_search('diabtes', 5, 2025)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Grant Permissions
+# MAGIC # Search with AI-powered query expansion
+# MAGIC
+# MAGIC This demonstrates how AI can improve search results by:
+# MAGIC
+# MAGIC 1. Taking your original search term ("diabetes screening")
+# MAGIC 2. Using AI to generate alternative phrasings (e.g., "HbA1c testing diabetic patients", "comprehensive diabetes care blood sugar monitoring")
+# MAGIC 3. Searching with both the original query AND all AI-generated variations
+# MAGIC 4. Combining and de-duplicating results to show you the top most relevant document chunks
+# MAGIC 5. Using an LLM to score relevance and rerank results based on the original query
+# MAGIC
+# MAGIC This helps find relevant content even when documents use different terminology than your search term, and is helpful when considering queries that are not directly matching chunks in your documents.
 
 # COMMAND ----------
 
-try:
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_definition_lookup TO `account users`")
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_document_search TO `account users`")
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_search_expansion TO `account users`")
-    print("Granted EXECUTE to 'account users'")
-except Exception as e:
-    print(f"Could not grant permissions (may need admin): {e}")
+print("\nTesting measures_document_search with AI-generated query expansions and reranking...")
+
+# First, get the combined search results
+combined_results = spark.sql(f"""
+    WITH original_search AS (
+        SELECT 
+            'diabetes screening' as original_query,
+            'diabetes screening' as expanded_query,
+            s.chunk_id,
+            s.score,
+            s.chunk_content,
+            s.page_start,
+            s.page_end,
+            s.effective_year
+        FROM {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 5, 2025) s
+    ),
+    expansions AS (
+        SELECT expanded_query
+        FROM {CATALOG}.{SCHEMA}.measures_search_expansion('diabetes screening', 3)
+    ),
+    expanded_search_results AS (
+        SELECT 
+            'diabetes screening' as original_query,
+            e.expanded_query,
+            s.chunk_id,
+            s.score,
+            s.chunk_content,
+            s.page_start,
+            s.page_end,
+            s.effective_year
+        FROM expansions e,
+        LATERAL {CATALOG}.{SCHEMA}.measures_document_search(e.expanded_query, 5, 2025) s
+    ),
+    all_search_results AS (
+        SELECT * FROM original_search
+        UNION ALL
+        SELECT * FROM expanded_search_results
+    ),
+    deduplicated AS (
+        SELECT 
+            *,
+            ROW_NUMBER() OVER (
+                PARTITION BY chunk_id 
+                ORDER BY score DESC
+            ) as rn
+        FROM all_search_results
+    ),
+    top_candidates AS (
+        SELECT 
+            original_query,
+            expanded_query,
+            chunk_id,
+            score as original_score,
+            chunk_content,
+            page_start,
+            page_end,
+            effective_year
+        FROM deduplicated
+        WHERE rn = 1
+        ORDER BY score DESC
+        LIMIT 20
+    )
+    SELECT 
+        original_query,
+        expanded_query,
+        chunk_id,
+        original_score,
+        chunk_content,
+        page_start,
+        page_end,
+        effective_year,
+        ai_query(
+            '{LLM_ENDPOINT}',
+            CONCAT(
+                'Rate the relevance of this document chunk to the query "', original_query, '" on a scale of 0.0 to 1.0. ',
+                'Only respond with a single decimal number between 0.0 and 1.0. ',
+                'Document chunk: ', chunk_content
+            )
+        ) as rerank_llm_score
+    FROM top_candidates
+    ORDER BY CAST(rerank_llm_score AS DOUBLE) DESC
+    LIMIT 20
+""")
+
+print(f"\nTop 5 results after AI reranking:")
+display(combined_results)
 
 # COMMAND ----------
 
