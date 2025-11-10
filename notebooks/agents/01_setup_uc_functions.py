@@ -15,8 +15,8 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-vectorsearch --quiet
-dbutils.library.restartPython()
+# MAGIC %pip install -r ../../requirements.txt
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 

@@ -1,6 +1,6 @@
 # Core Databricks and Spark
 databricks-sdk>=0.35.0
-databricks-vectorsearch
+databricks-vectorsearch==0.62
 
 # PDF Processing
 PyMuPDF>=1.24.14
