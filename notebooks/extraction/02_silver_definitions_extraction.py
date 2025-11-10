@@ -271,103 +271,133 @@ if file_count > 0:
 if file_count > 0:
     print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
     
-    from pyspark.sql.functions import expr, col
-    
-    # Get file list but keep it minimal
+    # Collect file list (small operation)
     files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
     
-    # Process each file
-    for i, file_row in enumerate(files_list, 1):
-        print(f"📄 Processing ({i}/{len(files_list)}): {file_row.file_name}")
-        
-        print(f"   Creating view with parsed and exploded elements...")
-        
-        # Create a single view that does parsing and exploding together
-        # This is lazy-evaluated and distributes the work across Spark
-        spark.sql(f"""
-            CREATE OR REPLACE TEMPORARY VIEW temp_elements_{i} AS
-            SELECT
-                file_id,
-                file_name,
-                effective_year,
-                try_cast(el:type AS STRING) AS element_type,
-                try_cast(el:content AS STRING) AS element_content,
-                coalesce(
-                    try_cast(el:page_id AS INT),
-                    try_cast(el:bbox[0]:page_id AS INT)
-                ) + 1 AS page_number,
-                CASE
-                    WHEN try_cast(el:type AS STRING) IN ('page_header', 'page_footer') THEN true
-                    ELSE false
-                END AS is_page_metadata
-            FROM (
+    # Parse all documents
+    all_parsed_docs = []
+    
+    from tqdm import tqdm
+    for file_row in tqdm(files_list, desc="Parsing documents"):
+        try:
+            print(f"\n📄 Parsing: {file_row.file_name}")
+            
+            # Parse the document
+            parsed_result = spark.sql(f"""
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
                     CAST({file_row.effective_year} AS INT) AS effective_year,
-                    parsed
-                FROM (
-                    SELECT ai_parse_document(
+                    ai_parse_document(
                         content,
                         map(
                             'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
                             'descriptionElementTypes', '*'
                         )
                     ) AS parsed
-                    FROM READ_FILES(
-                        '{file_row.file_path}',
-                        format => 'binaryFile'
+                FROM READ_FILES(
+                    '{file_row.file_path}',
+                    format => 'binaryFile'
+                )
+            """).collect()
+
+            # Process ALL results from the parse (defensive - typically 1 per file)
+            if parsed_result:
+                for result in parsed_result:
+                    all_parsed_docs.append({
+                        'file_id': result.file_id,
+                        'file_name': result.file_name,
+                        'effective_year': result.effective_year,
+                        'parsed': result.parsed
+                    })
+                print(f"   ✅ Parsed successfully ({len(parsed_result)} result(s))")
+            
+        except Exception as e:
+            print(f"   ❌ Failed to parse: {str(e)}")
+            raise e
+    
+    print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
+    
+    # Create DataFrame from parsed documents
+    if all_parsed_docs:
+        from pyspark.sql.functions import expr
+        
+        # Create DataFrame with parsed content
+        parsed_docs_df = spark.createDataFrame(all_parsed_docs)
+        
+        # Extract full text and error status
+        parsed_docs_df = parsed_docs_df.withColumn(
+            "full_text",
+            expr("""
+                concat_ws(
+                    '\n\n',
+                    transform(
+                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
+                        element -> try_cast(element:content AS STRING)
                     )
                 )
-            ) t
-            LATERAL VIEW explode(try_cast(t.parsed:document:elements AS ARRAY<VARIANT>)) e AS el
-            WHERE try_cast(el:content AS STRING) IS NOT NULL
-        """)
+            """)
+        ).withColumn(
+            "error_status",
+            expr("try_cast(parsed:error_status AS STRING)")
+        )
         
-        # Get count - this will trigger the computation
-        element_count = spark.sql(f"SELECT COUNT(*) FROM temp_elements_{i}").collect()[0][0]
-        print(f"   ✅ Extracted {element_count:,} elements from {file_row.file_name}")
-    
-    # Create final unified view
-    if len(files_list) == 1:
-        spark.sql(f"""
-            CREATE OR REPLACE TEMPORARY VIEW elements AS
-            SELECT * FROM temp_elements_1
+        # Register as temp view for SQL access
+        parsed_docs_df.createOrReplaceTempView("parsed_documents")
+
+        print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
+        print(f"   Available columns: file_id, file_name, effective_year, parsed, full_text, error_status")
+
+        # Display summary
+        display(parsed_docs_df.select("file_id", "file_name", "effective_year", "error_status"))
+
+        # Extract elements with page numbers
+        print("\n🔍 Extracting elements with page numbers...")
+
+        elements_df = spark.sql("""
+            WITH elements AS (
+                SELECT
+                    file_id,
+                    file_name,
+                    effective_year,
+                    el,
+                    try_cast(el:type AS STRING) AS element_type,
+                    try_cast(el:content AS STRING) AS element_content,
+                    /* Prefer top-level page_id if present, else fallback to bbox page_id */
+                    coalesce(
+                        try_cast(el:page_id AS INT),
+                        try_cast(el:bbox[0]:page_id AS INT)
+                    ) AS page_index_0_based
+                FROM parsed_documents
+                LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
+                WHERE try_cast(el:content AS STRING) IS NOT NULL
+            )
+            SELECT
+                file_id,
+                file_name,
+                effective_year,
+                element_type,
+                element_content,
+                page_index_0_based + 1 AS page_number,
+                -- Flag for page headers and footers for special handling
+                CASE
+                    WHEN element_type IN ('page_header', 'page_footer') THEN true
+                    ELSE false
+                END AS is_page_metadata
+            FROM elements
         """)
+
+        # Register as temp view
+        elements_df.createOrReplaceTempView("elements")
+        element_count = elements_df.count()
+
+        print(f"✅ Created 'elements' temp view with {element_count:,} elements")
+        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number")
+
+        # Display element summary
+        display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
     else:
-        # For multiple files, union them
-        union_parts = [f"SELECT * FROM temp_elements_{i+1}" for i in range(len(files_list))]
-        union_query = " UNION ALL ".join(union_parts)
-        spark.sql(f"""
-            CREATE OR REPLACE TEMPORARY VIEW elements AS
-            {union_query}
-        """)
-    
-    # Create parsed_documents view with aggregated full_text
-    spark.sql(f"""
-        CREATE OR REPLACE TEMPORARY VIEW parsed_documents AS
-        SELECT 
-            file_id,
-            file_name,
-            effective_year,
-            concat_ws('\\n\\n', collect_list(element_content)) as full_text,
-            COUNT(*) as element_count
-        FROM elements
-        GROUP BY file_id, file_name, effective_year
-    """)
-    
-    total_elements = spark.sql("SELECT COUNT(*) FROM elements").collect()[0][0]
-    print(f"\n✅ Created 'elements' view with {total_elements:,} total elements")
-    print(f"✅ Created 'parsed_documents' view with full_text")
-    
-    # Display summary
-    display(spark.sql("""
-        SELECT file_name, element_type, COUNT(*) as count 
-        FROM elements 
-        GROUP BY file_name, element_type 
-        ORDER BY file_name, element_type
-    """))
-    
+        print("⚠️  No documents successfully parsed")
 else:
     print("⚠️  No files to process")
 
