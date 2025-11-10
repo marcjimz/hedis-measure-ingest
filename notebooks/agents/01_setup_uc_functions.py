@@ -29,7 +29,7 @@
 dbutils.widgets.text("catalog", "main", "Catalog")
 dbutils.widgets.text("schema", "hedis_measurements", "Schema")
 dbutils.widgets.text("vs_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("vs_index_name", "hedis_chunks_index", "Vector Search Index Name")
+dbutils.widgets.text("vs_index_name", "hedis_measures_chunks", "Vector Search Index Name")
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
@@ -115,71 +115,37 @@ print(f"Created: {CATALOG}.{SCHEMA}.measure_definition_lookup")
 
 spark.sql(f"""
 CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.measures_document_search(
-  query STRING,
+  search_query STRING,
   num_results INT,
-  effective_year INT
+  filter_year INT
 )
-RETURNS STRING
-LANGUAGE PYTHON
-COMMENT 'Semantic search over HEDIS chunks. Returns JSON array of results with chunk_id, content, pages, year, measure, and score.'
-AS $$
-from databricks.vector_search.client import VectorSearchClient
-import json
-
-try:
-    vsc = VectorSearchClient()
-    index = vsc.get_index(
-        endpoint_name="{VS_ENDPOINT}",
-        index_name="{VS_INDEX}"
-    )
-
-    # Build filters
-    filters = {{}}
-    if effective_year is not None:
-        filters["effective_year"] = effective_year
-
-    # Columns to retrieve
-    columns = [
-        "chunk_id",
-        "chunk_content",
-        "page_start",
-        "page_end",
-        "effective_year",
-        "measure_name"
-    ]
-
-    # Execute search
-    raw_results = index.similarity_search(
-        query_text=query,
-        columns=columns,
-        num_results=num_results if num_results else 5,
-        filters=filters if filters else None,
-        query_type="hybrid"
-    )
-
-    # Parse results
-    results = []
-    data_array = raw_results.get("result", {{}}).get("data_array", [])
-
-    for row in data_array:
-        row_dict = dict(zip(columns, row))
-        score = row[-1] if len(row) > len(columns) else 0.0
-
-        results.append({{
-            "chunk_id": row_dict.get("chunk_id", ""),
-            "chunk_content": row_dict.get("chunk_content", ""),
-            "page_start": int(row_dict.get("page_start", 0)),
-            "page_end": int(row_dict.get("page_end", 0)),
-            "effective_year": int(row_dict.get("effective_year", 0)),
-            "measure_name": row_dict.get("measure_name"),
-            "score": float(score)
-        }})
-
-    return json.dumps(results)
-
-except Exception as e:
-    return json.dumps({{"error": str(e), "results": []}})
-$$
+RETURNS TABLE(
+  chunk_id STRING,
+  chunk_content STRING,
+  page_start INT,
+  page_end INT,
+  effective_year INT,
+  measure_name STRING,
+  score DOUBLE
+)
+COMMENT 'Semantic search over HEDIS chunks with optional year filtering'
+RETURN
+  SELECT 
+    chunk_id,
+    chunk_content,
+    page_start,
+    page_end,
+    effective_year,
+    measure_name,
+    score
+  FROM VECTOR_SEARCH(
+    index => '{VS_INDEX}',
+    query_text => search_query,
+    num_results => 100,
+    query_type => 'HYBRID'
+  )
+  WHERE filter_year IS NULL OR effective_year = filter_year
+  LIMIT CASE WHEN num_results IS NULL THEN 5 ELSE num_results END
 """)
 
 print(f"Created: {CATALOG}.{SCHEMA}.measures_document_search")
@@ -193,10 +159,9 @@ print(f"Created: {CATALOG}.{SCHEMA}.measures_document_search")
 
 # Test measure_definition_lookup
 print("Testing measure_definition_lookup('BCS', NULL)...")
-result = spark.sql(f"SELECT * FROM TABLE({CATALOG}.{SCHEMA}.measure_definition_lookup('BCS', NULL))")
+result = spark.sql(f"SELECT * FROM {CATALOG}.{SCHEMA}.measure_definition_lookup('CWP', NULL)")
 if result.count() > 0:
-    print("SUCCESS - Results:")
-    result.show(truncate=False)
+    display(result)
 else:
     print("WARNING - No results. Ensure hedis_measures_definitions has data.")
 
