@@ -186,17 +186,3 @@ result = spark.sql(f"""
     FROM {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 3, NULL)
 """)
 display(result)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Grant Permissions
-
-# COMMAND ----------
-
-# try:
-#     spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measure_definition_lookup TO `account users`")
-#     spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_document_search TO `account users`")
-#     print("Granted EXECUTE to 'account users'")
-# except Exception as e:
-#     print(f"Could not grant permissions (may need admin): {e}")
