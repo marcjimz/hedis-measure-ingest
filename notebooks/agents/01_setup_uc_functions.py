@@ -130,6 +130,24 @@ RETURNS TABLE(
 )
 COMMENT 'Semantic search over HEDIS chunks with optional year filtering'
 RETURN
+  WITH ranked_results AS (
+    SELECT 
+      chunk_id,
+      chunk_content,
+      page_start,
+      page_end,
+      effective_year,
+      measure_name,
+      search_score as score,
+      ROW_NUMBER() OVER (ORDER BY search_score DESC) as rn
+    FROM VECTOR_SEARCH(
+      index => '{VS_INDEX}',
+      query_text => search_query,
+      num_results => 100,
+      query_type => 'HYBRID'
+    )
+    WHERE filter_year IS NULL OR effective_year = filter_year
+  )
   SELECT 
     chunk_id,
     chunk_content,
@@ -138,14 +156,8 @@ RETURN
     effective_year,
     measure_name,
     score
-  FROM VECTOR_SEARCH(
-    index => '{VS_INDEX}',
-    query_text => search_query,
-    num_results => 100,
-    query_type => 'HYBRID'
-  )
-  WHERE filter_year IS NULL OR effective_year = filter_year
-  LIMIT CASE WHEN num_results IS NULL THEN 5 ELSE num_results END
+  FROM ranked_results
+  WHERE rn <= COALESCE(num_results, 5)
 """)
 
 print(f"Created: {CATALOG}.{SCHEMA}.measures_document_search")
@@ -169,22 +181,11 @@ else:
 
 # Test measures_document_search
 print("\nTesting measures_document_search('diabetes screening', 3, NULL)...")
-result = spark.sql(f"SELECT {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 3, NULL) as results")
-result_json = result.first()["results"]
-
-import json
-results = json.loads(result_json)
-
-if "error" in results:
-    print(f"ERROR: {results['error']}")
-elif isinstance(results, list) and len(results) > 0:
-    print(f"SUCCESS - {len(results)} results:")
-    for i, r in enumerate(results, 1):
-        print(f"{i}. {r.get('measure_name')} (Score: {r.get('score', 0):.3f})")
-        print(f"   Pages: {r.get('page_start')}-{r.get('page_end')}, Year: {r.get('effective_year')}")
-        print(f"   Content: {r.get('chunk_content', '')[:80]}...")
-else:
-    print("WARNING - No results. Ensure vector search index is populated.")
+result = spark.sql(f"""
+    SELECT score, chunk_content, page_start, page_end, effective_year
+    FROM {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 3, NULL)
+""")
+display(result)
 
 # COMMAND ----------
 
@@ -193,28 +194,9 @@ else:
 
 # COMMAND ----------
 
-try:
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measure_definition_lookup TO `account users`")
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_document_search TO `account users`")
-    print("Granted EXECUTE to 'account users'")
-except Exception as e:
-    print(f"Could not grant permissions (may need admin): {e}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Summary
-# MAGIC
-# MAGIC Created two UC functions:
-# MAGIC
-# MAGIC **1. measure_definition_lookup (SQL TVF)**
-# MAGIC ```sql
-# MAGIC SELECT * FROM TABLE(measure_definition_lookup('BCS', 2025))
-# MAGIC ```
-# MAGIC
-# MAGIC **2. measures_document_search (Python UDF)**
-# MAGIC ```sql
-# MAGIC SELECT measures_document_search('diabetes screening', 5, NULL)
-# MAGIC ```
-# MAGIC
-# MAGIC Both functions are ready for agent use. No complex wrappers needed.
+# try:
+#     spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measure_definition_lookup TO `account users`")
+#     spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_document_search TO `account users`")
+#     print("Granted EXECUTE to 'account users'")
+# except Exception as e:
+#     print(f"Could not grant permissions (may need admin): {e}")

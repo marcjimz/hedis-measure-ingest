@@ -41,7 +41,7 @@ dbutils.widgets.text("chunk_size", "1024", "Chunk Size (tokens)")
 dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
 dbutils.widgets.text("embedding_model", "databricks-bge-large-en", "Embedding Model")
-dbutils.widgets.text("vector_index_name", "hedis_measures_chunks", "Vector Search Index Name")
+dbutils.widgets.text("vector_index_name", "hedis_measures_index", "Vector Search Index Name")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
