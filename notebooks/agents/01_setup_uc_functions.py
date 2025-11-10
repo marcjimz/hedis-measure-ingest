@@ -3,8 +3,8 @@
 # MAGIC # Setup Unity Catalog Functions for HEDIS Agent
 # MAGIC
 # MAGIC Creates two simple UC functions:
-# MAGIC 1. **measure_lookup_tool** - SQL TVF for measure lookups
-# MAGIC 2. **vector_search_tool** - Python UDF for semantic search
+# MAGIC 1. **measure_definition_lookup** - SQL TVF for measure lookups
+# MAGIC 2. **measures_document_search** - Python UDF for semantic search
 # MAGIC
 # MAGIC Total: ~150 lines. Simple, deployable, testable.
 
@@ -54,14 +54,14 @@ spark.sql(f"USE SCHEMA {SCHEMA}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. Create measure_lookup_tool (SQL TVF)
+# MAGIC ## 1. Create measure_definition_lookup (SQL TVF)
 # MAGIC
 # MAGIC Simple SQL table-valued function for measure lookups.
 
 # COMMAND ----------
 
 spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.measure_lookup_tool(
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.measure_definition_lookup(
   search_acronym STRING,
   search_year INT
 )
@@ -102,19 +102,19 @@ RETURN
   LIMIT 1
 """)
 
-print(f"Created: {CATALOG}.{SCHEMA}.measure_lookup_tool")
+print(f"Created: {CATALOG}.{SCHEMA}.measure_definition_lookup")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Create vector_search_tool (Python UDF)
+# MAGIC ## 2. Create measures_document_search (Python UDF)
 # MAGIC
 # MAGIC Simple Python UDF for semantic search over HEDIS chunks.
 
 # COMMAND ----------
 
 spark.sql(f"""
-CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.vector_search_tool(
+CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.measures_document_search(
   query STRING,
   num_results INT,
   effective_year INT
@@ -182,7 +182,7 @@ except Exception as e:
 $$
 """)
 
-print(f"Created: {CATALOG}.{SCHEMA}.vector_search_tool")
+print(f"Created: {CATALOG}.{SCHEMA}.measures_document_search")
 
 # COMMAND ----------
 
@@ -191,9 +191,9 @@ print(f"Created: {CATALOG}.{SCHEMA}.vector_search_tool")
 
 # COMMAND ----------
 
-# Test measure_lookup_tool
-print("Testing measure_lookup_tool('BCS', NULL)...")
-result = spark.sql(f"SELECT * FROM TABLE({CATALOG}.{SCHEMA}.measure_lookup_tool('BCS', NULL))")
+# Test measure_definition_lookup
+print("Testing measure_definition_lookup('BCS', NULL)...")
+result = spark.sql(f"SELECT * FROM TABLE({CATALOG}.{SCHEMA}.measure_definition_lookup('BCS', NULL))")
 if result.count() > 0:
     print("SUCCESS - Results:")
     result.show(truncate=False)
@@ -202,9 +202,9 @@ else:
 
 # COMMAND ----------
 
-# Test vector_search_tool
-print("\nTesting vector_search_tool('diabetes screening', 3, NULL)...")
-result = spark.sql(f"SELECT {CATALOG}.{SCHEMA}.vector_search_tool('diabetes screening', 3, NULL) as results")
+# Test measures_document_search
+print("\nTesting measures_document_search('diabetes screening', 3, NULL)...")
+result = spark.sql(f"SELECT {CATALOG}.{SCHEMA}.measures_document_search('diabetes screening', 3, NULL) as results")
 result_json = result.first()["results"]
 
 import json
@@ -229,8 +229,8 @@ else:
 # COMMAND ----------
 
 try:
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measure_lookup_tool TO `account users`")
-    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.vector_search_tool TO `account users`")
+    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measure_definition_lookup TO `account users`")
+    spark.sql(f"GRANT EXECUTE ON FUNCTION {CATALOG}.{SCHEMA}.measures_document_search TO `account users`")
     print("Granted EXECUTE to 'account users'")
 except Exception as e:
     print(f"Could not grant permissions (may need admin): {e}")
@@ -242,14 +242,14 @@ except Exception as e:
 # MAGIC
 # MAGIC Created two UC functions:
 # MAGIC
-# MAGIC **1. measure_lookup_tool (SQL TVF)**
+# MAGIC **1. measure_definition_lookup (SQL TVF)**
 # MAGIC ```sql
-# MAGIC SELECT * FROM TABLE(measure_lookup_tool('BCS', 2025))
+# MAGIC SELECT * FROM TABLE(measure_definition_lookup('BCS', 2025))
 # MAGIC ```
 # MAGIC
-# MAGIC **2. vector_search_tool (Python UDF)**
+# MAGIC **2. measures_document_search (Python UDF)**
 # MAGIC ```sql
-# MAGIC SELECT vector_search_tool('diabetes screening', 5, NULL)
+# MAGIC SELECT measures_document_search('diabetes screening', 5, NULL)
 # MAGIC ```
 # MAGIC
 # MAGIC Both functions are ready for agent use. No complex wrappers needed.
