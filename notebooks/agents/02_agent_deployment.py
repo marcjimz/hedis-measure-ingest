@@ -46,7 +46,7 @@ dbutils.library.restartPython()
 
 # Create configuration widgets
 dbutils.widgets.text("catalog_name", "main", "UC Catalog")
-dbutils.widgets.text("schema_name", "hedis_pipeline", "UC Schema")
+dbutils.widgets.text("schema_name", "hedis_measurements", "UC Schema")
 dbutils.widgets.text("endpoint_name", "databricks-meta-llama-3-3-70b-instruct", "LLM Endpoint")
 dbutils.widgets.text("effective_year", "2025", "HEDIS Year")
 dbutils.widgets.dropdown("enable_persistence", "No", ["Yes", "No"], "Enable Persistence")

@@ -42,7 +42,7 @@ from pathlib import Path
 
 # Configuration
 UC_CATALOG = "main"
-UC_SCHEMA = "hedis_pipeline"
+UC_SCHEMA = "hedis_measurements"
 EVALUATION_SCHEMA = "hedis_evaluation"
 ENDPOINT_NAME = "databricks-meta-llama-3-3-70b-instruct"
 EFFECTIVE_YEAR = 2025

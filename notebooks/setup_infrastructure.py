@@ -76,7 +76,6 @@ print("=" * 60)
 
 # COMMAND ----------
 
-from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.vector_search.client import VectorSearchClient
 import time

@@ -29,23 +29,25 @@
 dbutils.widgets.text("catalog", "main", "Catalog")
 dbutils.widgets.text("schema", "hedis_measurements", "Schema")
 dbutils.widgets.text("vs_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("vs_index", "main.hedis_measurements.hedis_chunks_index", "Vector Search Index")
+dbutils.widgets.text("vs_index_name", "hedis_chunks_index", "Vector Search Index Name")
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
 VS_ENDPOINT = dbutils.widgets.get("vs_endpoint")
-VS_INDEX = dbutils.widgets.get("vs_index")
+VS_INDEX_NAME = dbutils.widgets.get("vs_index_name")
+
+# Construct full vector search index path from catalog and schema
+VS_INDEX = f"{CATALOG}.{SCHEMA}.{VS_INDEX_NAME}"
 
 print(f"Catalog: {CATALOG}")
 print(f"Schema: {SCHEMA}")
 print(f"Vector Search Endpoint: {VS_ENDPOINT}")
-print(f"Vector Search Index: {VS_INDEX}")
+print(f"Vector Search Index Name: {VS_INDEX_NAME}")
+print(f"Vector Search Index (Full): {VS_INDEX}")
 
 # COMMAND ----------
 
-from pyspark.sql import SparkSession
-spark = SparkSession.builder.getOrCreate()
-
+# Set catalog and schema context
 spark.sql(f"USE CATALOG {CATALOG}")
 spark.sql(f"USE SCHEMA {SCHEMA}")
 

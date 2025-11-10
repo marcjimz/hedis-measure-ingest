@@ -70,7 +70,6 @@ print(f"   Overlap: {overlap_percent * 100}%")
 import sys
 sys.path.append("../../src")
 
-from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql import functions as F
 
