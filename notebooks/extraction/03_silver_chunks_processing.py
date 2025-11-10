@@ -39,6 +39,9 @@ dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("chunk_size", "1024", "Chunk Size (tokens)")
 dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
+dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
+dbutils.widgets.text("embedding_model", "databricks-bge-large-en", "Embedding Model")
+dbutils.widgets.text("vector_index_name", "hedis_measures_chunks", "Vector Search Index Name")
 
 # Get parameters
 catalog_name = dbutils.widgets.get("catalog_name")
@@ -46,12 +49,16 @@ schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
 chunk_size = int(dbutils.widgets.get("chunk_size"))
 overlap_percent = float(dbutils.widgets.get("overlap_percent"))
+vector_endpoint_name = dbutils.widgets.get("vector_search_endpoint")
+embedding_model = dbutils.widgets.get("embedding_model")
+vector_index_name = dbutils.widgets.get("vector_index_name")
 
-# Table names
+# Table and index names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
 silver_table = f"{catalog_name}.{schema_name}.hedis_measures_chunks"
 volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 IMAGE_OUTPUT_PATH = f"{volume_path}/images"
+index_name = f"{catalog_name}.{schema_name}.{vector_index_name}"
 
 print(f"📋 Configuration:")
 print(f"   Bronze Table: {bronze_table}")
@@ -59,6 +66,9 @@ print(f"   Silver Table: {silver_table}")
 print(f"   Volume Path: {volume_path}")
 print(f"   Chunk Size: {chunk_size} tokens")
 print(f"   Overlap: {overlap_percent * 100}%")
+print(f"   Vector Search Endpoint: {vector_endpoint_name}")
+print(f"   Embedding Model: {embedding_model}")
+print(f"   Vector Search Index: {index_name}")
 
 # COMMAND ----------
 
@@ -542,26 +552,18 @@ else:
 
 from databricks.vector_search.client import VectorSearchClient
 
-# Get vector search endpoint name from setup
-dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("embedding_model", "databricks-bge-large-en", "Embedding Model")
-
-vector_endpoint_name = dbutils.widgets.get("vector_search_endpoint")
-embedding_model = dbutils.widgets.get("embedding_model")
-
 # Initialize Vector Search client
 vsc = VectorSearchClient()
 
 print(f"🔍 Vector Search Configuration:")
 print(f"   Endpoint: {vector_endpoint_name}")
 print(f"   Source Table: {silver_table}")
+print(f"   Index: {index_name}")
 print(f"   Embedding Model: {embedding_model}")
 
 # COMMAND ----------
 
 # Create or get vector search index
-index_name = f"{catalog_name}.{schema_name}.hedis_chunks_index"
-
 print(f"\n📊 Creating/updating vector search index: {index_name}")
 
 try:
