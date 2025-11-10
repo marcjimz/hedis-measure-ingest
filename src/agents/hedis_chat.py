@@ -642,8 +642,9 @@ class HEDISChatAgentFactory:
 
     # Default UC functions for HEDIS operations
     DEFAULT_UC_FUNCTIONS = [
-        "measure_definition_lookup",  # Tool for looking up measure definitions
-        "measures_document_search"     # Tool for semantic search over HEDIS chunks
+        "measures_definition_lookup",  # Tool for looking up measure definitions
+        "measures_document_search",    # Tool for semantic search over HEDIS chunks
+        "measures_search_expansion"    # Tool for AI-powered query expansion
     ]
 
     @staticmethod

@@ -160,7 +160,7 @@ agent = HEDISChatAgentFactory.create(
 
 print("HEDIS Chat Agent Created!")
 print(f"  - Mode: Dual (QnA + Compliance with auto-detection)")
-print(f"  - Tools: measure_definition_lookup, measures_document_search")
+print(f"  - Tools: measures_definition_lookup, measures_document_search, measures_search_expansion")
 print(f"  - Persistence: {'ENABLED' if enable_persistence else 'DISABLED'}")
 
 # COMMAND ----------
@@ -498,7 +498,7 @@ with mlflow.start_run(run_name="hedis-chat-agent-deployment") as run:
         "endpoint": endpoint_name,
         "effective_year": effective_year,
         "persistence": enable_persistence,
-        "tools": ["measure_definition_lookup", "measures_document_search"],
+        "tools": ["measures_definition_lookup", "measures_document_search", "measures_search_expansion"],
         "modes": ["QNA_MODE", "COMPLIANCE_MODE"],
         "features": [
             "Automatic intent detection",
