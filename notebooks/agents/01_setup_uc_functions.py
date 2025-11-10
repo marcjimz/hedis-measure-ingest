@@ -335,10 +335,9 @@ combined_results = spark.sql(f"""
         LIMIT 20
     )
     SELECT 
-        original_query,
-        expanded_query,
+        expanded_query as query,
         chunk_id,
-        original_score,
+        original_score as query_score,
         chunk_content,
         page_start,
         page_end,
@@ -350,13 +349,13 @@ combined_results = spark.sql(f"""
                 'Only respond with a single decimal number between 0.0 and 1.0. ',
                 'Document chunk: ', chunk_content
             )
-        ) as rerank_llm_score
+        ) as rerank_score
     FROM top_candidates
-    ORDER BY CAST(rerank_llm_score AS DOUBLE) DESC
+    ORDER BY CAST(rerank_score AS DOUBLE) DESC
     LIMIT 20
 """)
 
-print(f"\nTop 5 results after AI reranking:")
+print(f"\nTop results after AI reranking:")
 display(combined_results)
 
 # COMMAND ----------
