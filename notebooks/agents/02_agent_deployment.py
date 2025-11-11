@@ -125,7 +125,7 @@ else:
 
 # COMMAND ----------
 
-from agents.hedis_chat import HEDISChatAgentFactory
+from src.agents.hedis_chat import HEDISChatAgentFactory
 
 # Create the agent with persistence enabled (if configured)
 agent = HEDISChatAgentFactory.create(
