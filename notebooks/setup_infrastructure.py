@@ -44,7 +44,7 @@ dbutils.widgets.text("catalog_name", "main", "Catalog Name")
 dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
 dbutils.widgets.text("volume_name", "hedis", "Volume Name")
 dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.dropdown("create_lakebase", "No", ["Yes", "No"], "Create Lakebase Instance")
+dbutils.widgets.dropdown("create_lakebase", "Yes", ["Yes", "No"], "Create Lakebase Instance")
 dbutils.widgets.text("lakebase_instance_name", "hedis-agent-pg", "Lakebase Instance Name")
 
 # Get parameters
@@ -65,8 +65,6 @@ print(f"Vector Endpoint: {vector_endpoint_name}")
 print(f"Create Lakebase: {'Yes' if create_lakebase else 'No'}")
 if create_lakebase:
     print(f"Lakebase Instance: {lakebase_instance_name}")
-print("=" * 60)
-print("\n💡 Infrastructure will be created only if it doesn't already exist")
 print("=" * 60)
 
 # COMMAND ----------
