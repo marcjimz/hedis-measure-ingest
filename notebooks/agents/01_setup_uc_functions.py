@@ -3,11 +3,9 @@
 # MAGIC # Setup Unity Catalog Functions for HEDIS Agent
 # MAGIC
 # MAGIC Creates three simple UC functions:
-# MAGIC 1. **measures_definition_lookup** - SQL TVF for measure lookups
-# MAGIC 2. **measures_document_search** - SQL TVF for semantic search with VECTOR_SEARCH
-# MAGIC 3. **measures_search_expansion** - SQL TVF for AI-powered query expansion
-# MAGIC
-# MAGIC Total: ~300 lines. Simple, deployable, testable.
+# MAGIC 1. **measures_definition_lookup** - SQL for measure lookups
+# MAGIC 2. **measures_document_search** - SQL for semantic search with VECTOR_SEARCH
+# MAGIC 3. **measures_search_expansion** - SQL for AI-powered query expansion
 
 # COMMAND ----------
 
@@ -379,5 +377,7 @@ display(combined_results)
 # MAGIC ```sql
 # MAGIC SELECT * FROM measures_search_expansion('diabetes', 3)
 # MAGIC ```
-# MAGIC
-# MAGIC All functions are ready for agent use. No complex wrappers needed.
+
+# COMMAND ----------
+
+
