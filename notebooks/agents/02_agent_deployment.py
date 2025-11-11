@@ -28,11 +28,7 @@
 # MAGIC %md
 # MAGIC ## ⚙️ Configuration & Setup
 # MAGIC
-# MAGIC Configure your Databricks environment. The widgets below allow you to customize:
-# MAGIC - Catalog/schema for Unity Catalog functions
-# MAGIC - Lakebase instance for conversation persistence (optional - uses agent passthrough authentication)
-# MAGIC - Model serving endpoint selection
-# MAGIC - Effective year (optional override - auto-detected from data if not provided)
+# MAGIC Configure your Databricks environment.
 
 # COMMAND ----------
 
@@ -87,31 +83,41 @@ print(f"   Effective Year: {EFFECTIVE_YEAR or 'Auto-detect'}")
 print(f"   Persistence: {ENABLE_PERSISTENCE}")
 if ENABLE_PERSISTENCE:
     print(f"   Lakebase Instance: {LAKEBASE_INSTANCE}")
-    print(f"   Authentication: Agent Passthrough (deployed endpoint will use caller credentials)")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🗄️ Lakebase Setup Note
+# MAGIC ## 🗄️ Lakebase (Postgres) Setup
 # MAGIC
-# MAGIC **Important:** When persistence is enabled, the deployed agent will use **agent passthrough authentication** to access Lakebase.
-# MAGIC This means the agent endpoint will use the caller's credentials automatically - no service principal setup required!
-# MAGIC
-# MAGIC For **local testing** in this notebook, we'll run in stateless mode since passthrough only works with deployed endpoints.
-# MAGIC The deployed agent will have full persistence capabilities using the DatabricksLakebase resource.
+# MAGIC Initialize Lakebase connection for conversation persistence (if enabled).
 
 # COMMAND ----------
 
-# For local testing, we'll run stateless
-# The deployed agent will use DatabricksLakebase resource for automatic passthrough authentication
 conn_string = None
 
-if ENABLE_PERSISTENCE:
-    print(f"ℹ️  Persistence Configuration:")
-    print(f"   Lakebase Instance: {LAKEBASE_INSTANCE}")
-    print(f"   Local Testing: Stateless (persistence only works when deployed)")
-    print(f"   Deployed Agent: Will use agent passthrough authentication to Lakebase")
-    print(f"   Requirement: Endpoint creator must have 'databricks_superuser' permissions")
+if ENABLE_PERSISTENCE and LAKEBASE_INSTANCE:
+    from database.lakebase import LakebaseDatabase
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    # For local testing, use current user's credentials
+    # For deployed endpoint, Databricks will use caller's credentials via passthrough
+    w = WorkspaceClient()
+    workspace_host = f"https://{WORKSPACE_URL}"
+
+    lb_conn = LakebaseDatabase(host=workspace_host)
+    conn_string = lb_conn.initialize_connection(
+        user=w.current_user.me().user_name,
+        instance_name=LAKEBASE_INSTANCE
+    )
+
+    # Setup checkpointer tables
+    with PostgresSaver.from_conn_string(conn_string) as checkpointer:
+        checkpointer.setup()
+
+    print(f"✅ Lakebase connection established!")
+    print(f"   Instance: {LAKEBASE_INSTANCE}")
+    print(f"   User: {w.current_user.me().user_name}")
+    print(f"   Persistence: ENABLED")
 else:
     print("ℹ️  Persistence disabled - agent will run in stateless mode")
 
@@ -120,30 +126,26 @@ else:
 # MAGIC %md
 # MAGIC ## 🚀 Initialize the Agent
 # MAGIC
-# MAGIC Import and initialize the HEDIS Chat Agent. The agent will automatically:
-# MAGIC - Detect the latest effective_year from your data (unless overridden)
-# MAGIC - Configure Unity Catalog functions for measure lookup and search
-# MAGIC - Set up conversation persistence if enabled
+# MAGIC Import and initialize the HEDIS Chat Agent.
 
 # COMMAND ----------
 
 from agents.hedis_chat import HEDISChatAgentFactory
 
-# Create the agent (stateless for local testing)
+# Create the agent with persistence enabled (if configured)
 agent = HEDISChatAgentFactory.create(
     endpoint_name=ENDPOINT_NAME,
     catalog_name=CATALOG_NAME,
     schema_name=SCHEMA_NAME,
-    conn_string=None,  # Local testing is stateless
-    enable_persistence=False,  # Persistence only works when deployed with passthrough auth
+    conn_string=conn_string,
+    enable_persistence=ENABLE_PERSISTENCE,
     effective_year=EFFECTIVE_YEAR
 )
 
 print("\n✅ HEDIS Chat Agent Created!")
 print(f"  - Effective Year: {agent.effective_year}")
 print(f"  - Tools: measures_definition_lookup, measures_document_search, measures_search_expansion")
-print(f"  - Local Mode: Stateless")
-print(f"  - Deployed Mode: {'Persistent (with Lakebase)' if ENABLE_PERSISTENCE else 'Stateless'}")
+print(f"  - Persistence: {'ENABLED' if ENABLE_PERSISTENCE else 'DISABLED'}")
 
 # COMMAND ----------
 
@@ -183,7 +185,32 @@ print(response.messages[-1].content)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 🌊 Example 2: Streaming Response
+# MAGIC ### 💾 Example 2: Test Conversation Persistence
+# MAGIC
+# MAGIC Verify that the agent remembers previous messages using the thread ID (if persistence enabled).
+
+# COMMAND ----------
+
+if ENABLE_PERSISTENCE:
+    time.sleep(2)  # Allow persistence to complete
+
+    followup_response = agent.predict(
+        messages=[
+            {"role": "user", "content": "What was my previous question about?"}
+        ],
+        custom_inputs={"thread_id": thread_id}
+    )
+
+    print("Agent Response:")
+    print(followup_response.messages[-1].content)
+else:
+    print("Persistence not enabled. Skipping multi-turn conversation test.")
+    print("To enable persistence, set 'Enable Persistence' widget to 'Yes' and provide a Lakebase instance.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 🌊 Example 3: Streaming Response
 # MAGIC
 # MAGIC Demonstrate streaming capabilities for real-time responses.
 
@@ -350,8 +377,7 @@ print(f"   URI: {model_uri_uc}")
 # MAGIC %md
 # MAGIC ### 🔐 Configure Environment Variables
 # MAGIC
-# MAGIC Set environment variables for the deployed agent. Note that Lakebase authentication is handled
-# MAGIC automatically via agent passthrough - no credentials needed!
+# MAGIC Set environment variables for the deployed agent.
 
 # COMMAND ----------
 
@@ -364,15 +390,13 @@ envvars = {
 if EFFECTIVE_YEAR:
     envvars["EFFECTIVE_YEAR"] = str(EFFECTIVE_YEAR)
 
-# Note: No Lakebase credentials needed! Agent passthrough handles authentication automatically
 print("Environment variables configured for deployment:")
 for key, value in envvars.items():
     print(f"   {key}: {value}")
 
 if ENABLE_PERSISTENCE:
-    print(f"\nℹ️  Lakebase Configuration:")
-    print(f"   Instance: {LAKEBASE_INSTANCE} (via DatabricksLakebase resource)")
-    print(f"   Authentication: Automatic passthrough (uses caller's credentials)")
+    print(f"\nℹ️  Lakebase resource will be added to deployment:")
+    print(f"   Instance: {LAKEBASE_INSTANCE}")
 
 # COMMAND ----------
 
@@ -428,7 +452,7 @@ print(response.messages[-1]['content'])
 # MAGIC
 # MAGIC The agent has been:
 # MAGIC 1. ✅ Configured with Unity Catalog functions (measure lookup, document search, query expansion)
-# MAGIC 2. ✅ Tested locally in stateless mode
+# MAGIC 2. ✅ Tested locally with persistence (if enabled)
 # MAGIC 3. ✅ Logged to MLflow experiment (`/Shared/hedis-chat-agent`)
 # MAGIC 4. ✅ Registered to Unity Catalog with `production` alias
 # MAGIC 5. ✅ Deployed to Model Serving endpoint with DatabricksLakebase resource (if enabled)
@@ -437,14 +461,9 @@ print(response.messages[-1]['content'])
 # MAGIC - Answer questions about HEDIS measures
 # MAGIC - Semantic search over HEDIS documentation
 # MAGIC - AI-powered query expansion for better search results
-# MAGIC - Conversation persistence via Lakebase (optional, uses agent passthrough auth)
+# MAGIC - Conversation persistence via Lakebase (optional)
 # MAGIC - Streaming responses for real-time interaction
 # MAGIC - Auto-detection of latest effective year from your data
-# MAGIC
-# MAGIC **Authentication:**
-# MAGIC - Unity Catalog functions: Automatic passthrough (uses caller's credentials)
-# MAGIC - Lakebase (if enabled): Automatic passthrough (no service principal setup needed!)
-# MAGIC - Requires `databricks_superuser` permissions for endpoint creator
 # MAGIC
 # MAGIC **Next Steps:**
 # MAGIC - Test the Review App in the Databricks UI
