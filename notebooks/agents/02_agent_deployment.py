@@ -97,20 +97,16 @@ conn_string = None
 
 if ENABLE_PERSISTENCE and LAKEBASE_INSTANCE:
     from database.lakebase import LakebaseDatabase
-    from langgraph.checkpoint.postgres import PostgresSaver
 
-    # Use passthrough authentication - no credentials required!
+    # Use passthrough authentication - credentials generated automatically via SDK
     w = WorkspaceClient()
 
     lb_conn = LakebaseDatabase()  # Uses default authentication (current user's token)
     conn_string = lb_conn.initialize_connection(
         user=w.current_user.me().user_name,
-        instance_name=LAKEBASE_INSTANCE
+        instance_name=LAKEBASE_INSTANCE,
+        setup_checkpointer=True  # Setup tables using the connection pool
     )
-
-    # Setup checkpointer tables
-    with PostgresSaver.from_conn_string(conn_string) as checkpointer:
-        checkpointer.setup()
 
     print(f"✅ Lakebase connection established!")
     print(f"   Instance: {LAKEBASE_INSTANCE}")
