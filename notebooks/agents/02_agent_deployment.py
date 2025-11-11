@@ -129,7 +129,7 @@ else:
 
 # COMMAND ----------
 
-from agents.hedis_chat import HEDISChatAgentFactory
+from src.agents.hedis_chat import HEDISChatAgentFactory
 
 # Create the agent with persistence enabled (if configured)
 agent = HEDISChatAgentFactory.create(
@@ -156,7 +156,7 @@ print(f"  - Persistence: {'ENABLED' if ENABLE_PERSISTENCE else 'DISABLED'}")
 # COMMAND ----------
 
 # Enable MLflow tracing for interactive testing
-mlflow.langchain.autolog()
+mlflow.autolog()
 
 # Set the agent as the current model for this session
 mlflow.models.set_model(agent)
