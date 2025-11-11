@@ -81,6 +81,7 @@ print(f"   Schema: {SCHEMA_NAME}")
 print(f"   Endpoint: {ENDPOINT_NAME}")
 print(f"   Effective Year: {EFFECTIVE_YEAR or 'Auto-detect'}")
 print(f"   Persistence: {ENABLE_PERSISTENCE}")
+
 if ENABLE_PERSISTENCE:
     print(f"   Lakebase Instance: {LAKEBASE_INSTANCE}")
 
