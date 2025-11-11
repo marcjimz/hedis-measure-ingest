@@ -56,7 +56,7 @@ dbutils.widgets.text("schema_name", "hedis_measurements", "Schema")
 dbutils.widgets.text("endpoint_name", "databricks-claude-opus-4-1", "Model Serving Endpoint")
 dbutils.widgets.text("effective_year", "", "Effective Year (optional - auto-detected if empty)")
 dbutils.widgets.dropdown("enable_persistence", "No", ["Yes", "No"], "Enable Persistence")
-dbutils.widgets.text("lakebase_instance", "hedis-agent-persistence", "Lakebase Instance (if persistence enabled)")
+dbutils.widgets.text("lakebase_instance", "hedis-agent-pg", "Lakebase Instance (if persistence enabled)")
 
 # Get configuration from widgets
 CATALOG_NAME = dbutils.widgets.get("catalog_name")
