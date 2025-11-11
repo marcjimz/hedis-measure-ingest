@@ -220,6 +220,8 @@ class LakebaseDatabase:
         try:
             logger.info("Setting up PostgresSaver tables for LangGraph checkpointing")
             with self.connection_pool.connection() as conn:
+                # Enable autocommit mode for CREATE INDEX CONCURRENTLY
+                conn.autocommit = True
                 checkpointer = PostgresSaver(conn)
                 checkpointer.setup()
                 logger.info("PostgresSaver setup completed successfully")
