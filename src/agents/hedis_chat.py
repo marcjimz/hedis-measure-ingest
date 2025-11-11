@@ -583,29 +583,48 @@ class HEDISChatAgentFactory:
 
 # Create agent instance for MLflow deployment
 if __name__ == "__main__":
-    # Get configuration from environment
+    # Get configuration from environment and model_config
     endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
     catalog_name = os.getenv("UC_CATALOG", "main")
     schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
     effective_year_str = os.getenv("EFFECTIVE_YEAR")
     effective_year = int(effective_year_str) if effective_year_str else None
-    enable_persistence = os.getenv("ENABLE_PERSISTENCE", "false").lower() == "true"
+
+    # Try to read model_config for deployment configuration
+    try:
+        model_config = mlflow.models.ModelConfig(development_config="model_config.yaml")
+        enable_persistence = model_config.get("enable_persistence", False)
+        lakebase_instance = model_config.get("lakebase_instance")
+    except Exception:
+        # Model config not available, use defaults
+        enable_persistence = False
+        lakebase_instance = None
 
     # Get connection string if persistence enabled
+    # When deployed with DatabricksLakebase resource, Databricks injects credentials automatically
+    # The connection info is available via environment variables
     conn_string = None
-    if enable_persistence:
-        conn_string = os.getenv("DB_CONNECTION_STRING")
-        if not conn_string:
-            # Try to initialize from LakebaseDatabase
+    if enable_persistence and lakebase_instance:
+        # Check for injected Lakebase connection environment variables
+        # Databricks automatically injects these when DatabricksLakebase resource is declared
+        lakebase_host = os.getenv("DATABRICKS_LAKEBASE_HOST")
+        lakebase_token = os.getenv("DATABRICKS_LAKEBASE_TOKEN") or os.getenv("DATABRICKS_TOKEN")
+
+        if lakebase_host and lakebase_token:
+            # Build connection string using injected credentials
             try:
                 from src.database.lakebase import LakebaseDatabase
-                lakebase_db = LakebaseDatabase(host=os.getenv("DATABRICKS_HOST"))
-                conn_string = lakebase_db.initialize_connection(
-                    user=os.getenv("DATABRICKS_CLIENT_ID"),
-                    instance_name=os.getenv("LAKEBASE_INSTANCE")
-                )
-            except ImportError:
-                print("Warning: LakebaseDatabase not available and no DB_CONNECTION_STRING provided")
+                lakebase_db = LakebaseDatabase(host=lakebase_host, token=lakebase_token)
+                conn_string = lakebase_db.get_connection_string(instance_name=lakebase_instance)
+                print(f"Lakebase connection initialized via passthrough authentication")
+            except Exception as e:
+                print(f"Warning: Could not connect to Lakebase: {e}")
+                print(f"Agent will run in stateless mode")
+                enable_persistence = False
+        else:
+            print(f"Note: Lakebase credentials not available (expected when running locally)")
+            print(f"Agent will run in stateless mode for local testing")
+            enable_persistence = False
 
     # Create agent
     AGENT = HEDISChatAgentFactory.create(
@@ -626,3 +645,5 @@ if __name__ == "__main__":
     print(f"  - Schema: {schema_name}")
     print(f"  - Effective Year: {AGENT.effective_year}")
     print(f"  - Persistence: {enable_persistence}")
+    if enable_persistence and lakebase_instance:
+        print(f"  - Lakebase Instance: {lakebase_instance}")
