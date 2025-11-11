@@ -18,6 +18,7 @@ import pathlib
 import sys
 import json
 from psycopg import Connection
+from psycopg_pool import ConnectionPool
 
 # Add agent root to path for deployment
 agent_root = pathlib.Path(__file__).resolve().parent
@@ -74,6 +75,7 @@ class HEDISChatAgent(ChatAgent):
         model: LanguageModelLike,
         tools: Union[Sequence[BaseTool], ToolNode],
         conn_string: Optional[str] = None,
+        connection_pool: Optional[ConnectionPool] = None,
         enable_persistence: bool = False,
         effective_year: Optional[int] = None
     ):
@@ -83,20 +85,22 @@ class HEDISChatAgent(ChatAgent):
         Args:
             model: Language model for chat responses
             tools: Tools for measure lookup and vector search
-            conn_string: Database connection string for persistence (optional)
+            conn_string: Database connection string for persistence (optional, deprecated)
+            connection_pool: Database connection pool with auto-refresh (preferred)
             enable_persistence: Enable PostgreSQL checkpointing (default: False)
             effective_year: HEDIS measurement year (optional, auto-detected if None)
         """
         self.model = model
         self.tools = tools
         self.conn_string = conn_string
+        self.connection_pool = connection_pool
         self.enable_persistence = enable_persistence
         self.effective_year = effective_year or 2025  # Will be updated by factory
         self.thread_id = "default"
 
         # Validate configuration
-        if enable_persistence and not conn_string:
-            raise ValueError("Connection string required when persistence is enabled")
+        if enable_persistence and not (conn_string or connection_pool):
+            raise ValueError("Connection string or connection pool required when persistence is enabled")
 
     def _convert_messages_to_dict(self, messages: List[Union[ChatAgentMessage, dict]]) -> List[dict]:
         """
@@ -313,7 +317,7 @@ class HEDISChatAgent(ChatAgent):
         thread_id = custom_inputs.get("thread_id")
 
         # Handle persistence and threading
-        if self.enable_persistence and self.conn_string:
+        if self.enable_persistence and (self.connection_pool or self.conn_string):
             # Use persistent mode with checkpointing
             if thread_id:
                 # Continuing conversation - send only new message
@@ -325,18 +329,35 @@ class HEDISChatAgent(ChatAgent):
 
             config = {"configurable": {"thread_id": thread_id}}
 
-            with Connection.connect(self.conn_string) as conn:
-                checkpointer = PostgresSaver(conn)
-                agent = self._create_agent_graph(checkpointer)
+            # Prefer connection pool over connection string
+            if self.connection_pool:
+                # Use connection pool (has automatic credential refresh)
+                with self.connection_pool.connection() as conn:
+                    checkpointer = PostgresSaver(conn)
+                    agent = self._create_agent_graph(checkpointer)
 
-                converted_messages = self._convert_messages_to_dict(messages_to_send)
-                result = agent.invoke({"messages": converted_messages}, config)
+                    converted_messages = self._convert_messages_to_dict(messages_to_send)
+                    result = agent.invoke({"messages": converted_messages}, config)
 
-                # Parse output messages
-                out_messages = []
-                if result.get("messages"):
-                    for msg in result["messages"]:
-                        out_messages.append(self._parse_message(msg))
+                    # Parse output messages
+                    out_messages = []
+                    if result.get("messages"):
+                        for msg in result["messages"]:
+                            out_messages.append(self._parse_message(msg))
+            else:
+                # Fall back to connection string (deprecated)
+                with Connection.connect(self.conn_string) as conn:
+                    checkpointer = PostgresSaver(conn)
+                    agent = self._create_agent_graph(checkpointer)
+
+                    converted_messages = self._convert_messages_to_dict(messages_to_send)
+                    result = agent.invoke({"messages": converted_messages}, config)
+
+                    # Parse output messages
+                    out_messages = []
+                    if result.get("messages"):
+                        for msg in result["messages"]:
+                            out_messages.append(self._parse_message(msg))
         else:
             # Non-persistent mode - no threading
             thread_id = thread_id or str(uuid.uuid4())
@@ -391,7 +412,7 @@ class HEDISChatAgent(ChatAgent):
         thread_id = custom_inputs.get("thread_id")
 
         # Handle persistence and threading
-        if self.enable_persistence and self.conn_string:
+        if self.enable_persistence and (self.connection_pool or self.conn_string):
             if thread_id:
                 messages_to_send = [messages[-1]] if messages else []
             else:
@@ -400,17 +421,33 @@ class HEDISChatAgent(ChatAgent):
 
             config = {"configurable": {"thread_id": thread_id}}
 
-            with Connection.connect(self.conn_string) as conn:
-                checkpointer = PostgresSaver(conn)
-                agent = self._create_agent_graph(checkpointer)
+            # Prefer connection pool over connection string
+            if self.connection_pool:
+                # Use connection pool (has automatic credential refresh)
+                with self.connection_pool.connection() as conn:
+                    checkpointer = PostgresSaver(conn)
+                    agent = self._create_agent_graph(checkpointer)
 
-                converted_messages = self._convert_messages_to_dict(messages_to_send)
+                    converted_messages = self._convert_messages_to_dict(messages_to_send)
 
-                for chunk in agent.stream({"messages": converted_messages}, config, stream_mode="values"):
-                    if chunk.get("messages"):
-                        for msg in chunk["messages"]:
-                            parsed_msg = self._parse_message(msg)
-                            yield ChatAgentChunk(delta=parsed_msg.__dict__)
+                    for chunk in agent.stream({"messages": converted_messages}, config, stream_mode="values"):
+                        if chunk.get("messages"):
+                            for msg in chunk["messages"]:
+                                parsed_msg = self._parse_message(msg)
+                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
+            else:
+                # Fall back to connection string (deprecated)
+                with Connection.connect(self.conn_string) as conn:
+                    checkpointer = PostgresSaver(conn)
+                    agent = self._create_agent_graph(checkpointer)
+
+                    converted_messages = self._convert_messages_to_dict(messages_to_send)
+
+                    for chunk in agent.stream({"messages": converted_messages}, config, stream_mode="values"):
+                        if chunk.get("messages"):
+                            for msg in chunk["messages"]:
+                                parsed_msg = self._parse_message(msg)
+                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
         else:
             # Non-persistent streaming
             thread_id = thread_id or str(uuid.uuid4())
@@ -486,6 +523,7 @@ class HEDISChatAgentFactory:
         catalog_name: Optional[str] = None,
         schema_name: Optional[str] = None,
         conn_string: Optional[str] = None,
+        connection_pool: Optional[ConnectionPool] = None,
         enable_persistence: bool = False,
         effective_year: Optional[int] = None,
         databricks_function_client: Optional[DatabricksFunctionClient] = None,
@@ -498,7 +536,8 @@ class HEDISChatAgentFactory:
             uc_function_names: UC function names for tools (default: measure_lookup, vector_search)
             catalog_name: Unity Catalog catalog name (for namespaced functions)
             schema_name: Unity Catalog schema name (for namespaced functions)
-            conn_string: Database connection string (required if enable_persistence=True)
+            conn_string: Database connection string (deprecated, use connection_pool)
+            connection_pool: Database connection pool with auto-refresh (preferred)
             enable_persistence: Enable PostgreSQL checkpointing
             effective_year: HEDIS measurement year (optional, auto-detected if None)
             databricks_function_client: Optional Databricks function client
@@ -507,8 +546,8 @@ class HEDISChatAgentFactory:
             HEDISChatAgent instance
         """
         # Validate persistence configuration
-        if enable_persistence and not conn_string:
-            raise ValueError("Connection string required when persistence is enabled")
+        if enable_persistence and not (conn_string or connection_pool):
+            raise ValueError("Connection string or connection pool required when persistence is enabled")
 
         # Auto-detect effective_year if not provided
         if effective_year is None and catalog_name and schema_name:
@@ -542,6 +581,7 @@ class HEDISChatAgentFactory:
             model=llm,
             tools=tools,
             conn_string=conn_string,
+            connection_pool=connection_pool,
             enable_persistence=enable_persistence,
             effective_year=effective_year
         )

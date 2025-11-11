@@ -94,7 +94,7 @@ if ENABLE_PERSISTENCE:
 
 # COMMAND ----------
 
-conn_string = None
+connection_pool = None
 
 if ENABLE_PERSISTENCE and LAKEBASE_INSTANCE:
     from database.lakebase import LakebaseDatabase
@@ -103,16 +103,20 @@ if ENABLE_PERSISTENCE and LAKEBASE_INSTANCE:
     w = WorkspaceClient()
 
     lb_conn = LakebaseDatabase()  # Uses default authentication (current user's token)
-    conn_string = lb_conn.initialize_connection(
+    lb_conn.initialize_connection(
         user=w.current_user.me().user_name,
         instance_name=LAKEBASE_INSTANCE,
         setup_checkpointer=True  # Setup tables using the connection pool
     )
 
+    # Get the connection pool (has automatic credential refresh)
+    connection_pool = lb_conn.get_connection_pool()
+
     print(f"✅ Lakebase connection established!")
     print(f"   Instance: {LAKEBASE_INSTANCE}")
     print(f"   User: {w.current_user.me().user_name}")
     print(f"   Persistence: ENABLED")
+    print(f"   Connection pool: {connection_pool is not None}")
 else:
     print("ℹ️  Persistence disabled - agent will run in stateless mode")
 
@@ -125,14 +129,14 @@ else:
 
 # COMMAND ----------
 
-from src.agents.hedis_chat import HEDISChatAgentFactory
+from agents.hedis_chat import HEDISChatAgentFactory
 
 # Create the agent with persistence enabled (if configured)
 agent = HEDISChatAgentFactory.create(
     endpoint_name=ENDPOINT_NAME,
     catalog_name=CATALOG_NAME,
     schema_name=SCHEMA_NAME,
-    conn_string=conn_string,
+    connection_pool=connection_pool,
     enable_persistence=ENABLE_PERSISTENCE,
     effective_year=EFFECTIVE_YEAR
 )
