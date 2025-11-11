@@ -56,7 +56,8 @@ except ImportError:
     # Fallback for different import contexts
     from agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
 
-mlflow.autolog()
+# Enable MLflow tracing for LangChain/LangGraph
+mlflow.langchain.autolog(log_models=True, log_input_examples=True, registered_model_name=None)
 
 
 class HEDISChatAgent(ChatAgent):
