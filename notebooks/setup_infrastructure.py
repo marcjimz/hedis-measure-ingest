@@ -420,6 +420,97 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Step 4.6: Register Lakebase with Unity Catalog (Optional)
+# MAGIC
+# MAGIC **Optional**: Register the Lakebase instance with Unity Catalog for unified governance.
+# MAGIC This allows SQL access to Lakebase data and integration with Delta Lake features.
+# MAGIC
+# MAGIC **Note**: This step is idempotent - safe to run multiple times.
+
+# COMMAND ----------
+
+if create_lakebase:
+    from databricks.sdk.service.database import DatabaseCatalog
+
+    # UC catalog names can't have hyphens - replace with underscores
+    uc_catalog_name = f"{lakebase_instance_name.replace('-', '_')}_pg"
+    database_name = "databricks_postgres"  # Default Lakebase database name
+
+    print(f"🔍 Checking if Unity Catalog '{uc_catalog_name}' is registered...")
+
+    try:
+        # Check if catalog already exists
+        existing_catalog = w.catalogs.get(name=uc_catalog_name)
+        print(f"✅ Unity Catalog '{uc_catalog_name}' already exists - skipping creation")
+        print(f"   Full Name: {existing_catalog.full_name}")
+        print(f"   Owner: {existing_catalog.owner}")
+        catalog_exists = True
+
+    except Exception:
+        # Catalog doesn't exist, proceed with creation
+        print(f"🏗️  Catalog not found - creating Unity Catalog integration...")
+        catalog_exists = False
+
+    # Create catalog if it doesn't exist
+    if not catalog_exists:
+        try:
+            catalog = w.database.create_database_catalog(
+                DatabaseCatalog(
+                    name=uc_catalog_name,
+                    database_instance_name=lakebase_instance_name,
+                    database_name=database_name
+                )
+            )
+
+            print(f"✅ Successfully created Unity Catalog integration!")
+            print(f"\n📊 Catalog Details:")
+            print(f"   Catalog Name: {catalog.name}")
+            print(f"   Database Instance: {lakebase_instance_name}")
+            print(f"   Postgres Database: {database_name}")
+            print(f"\n💡 Benefits:")
+            print(f"   • Read-only SQL access to Lakebase data")
+            print(f"   • Unified governance across lakehouse and OLTP data")
+            print(f"   • Automatic schema discovery and metadata sync")
+            print(f"   • Integration with feature serving and synced tables")
+
+        except Exception as e:
+            print(f"⚠️  Failed to create Unity Catalog integration: {str(e)}")
+            print(f"   You may need additional permissions or the instance may still be provisioning")
+            print(f"   Continuing with setup...")
+
+    # Verify the catalog configuration
+    print(f"\n🔍 Verifying Unity Catalog integration...")
+
+    try:
+        # Confirm catalog exists in Unity Catalog
+        catalog_info = w.catalogs.get(name=uc_catalog_name)
+        print(f"✅ Verified catalog exists in Unity Catalog")
+        print(f"   Full Name: {catalog_info.full_name}")
+        print(f"   Owner: {catalog_info.owner}")
+
+        # List schemas in the catalog
+        print(f"\n📁 Schemas in catalog '{uc_catalog_name}':")
+        try:
+            schemas = list(w.schemas.list(catalog_name=uc_catalog_name))
+            if schemas:
+                for schema in schemas:
+                    print(f"   • {schema.name}")
+            else:
+                print(f"   (No schemas found - may need to create tables in Postgres first)")
+        except Exception as schema_error:
+            print(f"   ⚠️  Could not list schemas: {schema_error}")
+
+    except Exception as verify_error:
+        print(f"⚠️  Could not verify catalog: {verify_error}")
+        print(f"   The catalog may still be provisioning...")
+
+    print(f"\n✅ Unity Catalog registration complete!")
+else:
+    print("⏭️  Unity Catalog registration skipped (Lakebase not created)")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Step 5: Create Delta Tables
 # MAGIC
 # MAGIC Creates three tables:
