@@ -46,43 +46,48 @@ class LakebaseDatabase:
     - Automatic credential generation and rotation
     - Connection pooling with custom connection factory
     - PostgresSaver setup for LangGraph checkpoint persistence
+    - Support for both OAuth and passthrough authentication
     - Proper error handling and logging
 
     Attributes:
-        host (str): Databricks workspace host URL
+        host (Optional[str]): Databricks workspace host URL
         connection_pool (ConnectionPool): Pool of database connections
-        client_id (str): Databricks OAuth client ID
-        client_secret (str): Databricks OAuth client secret
+        client_id (Optional[str]): Databricks OAuth client ID (optional)
+        client_secret (Optional[str]): Databricks OAuth client secret (optional)
         w (WorkspaceClient): Databricks workspace client
     """
 
-    def __init__(self, host: str):
+    def __init__(self, host: Optional[str] = None, client_id: Optional[str] = None, client_secret: Optional[str] = None):
         """
         Initialize the LakebaseDatabase instance.
 
         Args:
-            host: Databricks workspace host URL (e.g., "https://dbc-xxx.cloud.databricks.com")
+            host: Databricks workspace host URL (optional, uses default if not provided)
+            client_id: Databricks OAuth client ID (optional, uses environment variable or default auth)
+            client_secret: Databricks OAuth client secret (optional, uses environment variable or default auth)
 
-        Raises:
-            ValueError: If required environment variables are not set
+        Notes:
+            If client_id and client_secret are not provided, the WorkspaceClient will use
+            default authentication (e.g., current user's token for passthrough authentication).
         """
         self.connection_pool: Optional[ConnectionPool] = None
         self.host = host
-        self.client_id = os.getenv("DATABRICKS_CLIENT_ID")
-        self.client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
-
-        if not self.client_id or not self.client_secret:
-            raise ValueError(
-                "DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET environment variables must be set"
-            )
+        self.client_id = client_id or os.getenv("DATABRICKS_CLIENT_ID")
+        self.client_secret = client_secret or os.getenv("DATABRICKS_CLIENT_SECRET")
 
         try:
-            self.w = WorkspaceClient(
-                host=self.host,
-                client_id=self.client_id,
-                client_secret=self.client_secret
-            )
-            logger.info(f"Initialized Databricks workspace client for host: {host}")
+            # Initialize WorkspaceClient with provided credentials or use default authentication
+            if self.client_id and self.client_secret:
+                self.w = WorkspaceClient(
+                    host=self.host,
+                    client_id=self.client_id,
+                    client_secret=self.client_secret
+                )
+                logger.info(f"Initialized Databricks workspace client with OAuth credentials for host: {host}")
+            else:
+                # Use default authentication (passthrough or environment-based)
+                self.w = WorkspaceClient(host=self.host) if self.host else WorkspaceClient()
+                logger.info(f"Initialized Databricks workspace client with default authentication")
         except Exception as e:
             logger.error(f"Failed to initialize Databricks workspace client: {str(e)}", exc_info=True)
             raise ConnectionInitializationError(f"Failed to initialize workspace client: {str(e)}") from e

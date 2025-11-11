@@ -308,28 +308,21 @@ if create_lakebase:
                 from database.lakebase import LakebaseDatabase
                 import os
 
-                # Get credentials
-                host = w.config.host
-                client_id = os.getenv("DATABRICKS_CLIENT_ID")
+                # Use passthrough authentication
+                lakebase_db = LakebaseDatabase()  # Uses default authentication
 
-                if not client_id:
-                    print("⚠️  DATABRICKS_CLIENT_ID not set. Skipping checkpointer setup.")
-                    print("   Set this environment variable to enable checkpointer table creation.")
-                else:
-                    # Initialize Lakebase connection
-                    lakebase_db = LakebaseDatabase(host=host)
+                # Initialize connection with checkpointer setup
+                conn_string = lakebase_db.initialize_connection(
+                    user=w.current_user.me().user_name,
+                    instance_name=lakebase_instance_name,
+                    database="databricks_postgres",
+                    setup_checkpointer=True
+                )
 
-                    # Initialize connection with checkpointer setup
-                    conn_string = lakebase_db.initialize_connection(
-                        user=client_id,
-                        instance_name=lakebase_instance_name,
-                        database="databricks_postgres",
-                        setup_checkpointer=True
-                    )
-
-                    print(f"✅ PostgresSaver tables created successfully!")
-                    print(f"   Instance: {lakebase_instance_name}")
-                    print(f"   Database: databricks_postgres")
+                print(f"✅ PostgresSaver tables created successfully!")
+                print(f"   Instance: {lakebase_instance_name}")
+                print(f"   Database: databricks_postgres")
+                print(f"   User: {w.current_user.me().user_name}")
 
             except Exception as e:
                 if "already exists" in str(e).lower() or "relation" in str(e).lower():
@@ -380,30 +373,22 @@ if create_lakebase:
                             sys.path.append("../src")
 
                             from database.lakebase import LakebaseDatabase
-                            import os
 
-                            # Get credentials
-                            host = w.config.host
-                            client_id = os.getenv("DATABRICKS_CLIENT_ID")
+                            # Use passthrough authentication
+                            lakebase_db = LakebaseDatabase()  # Uses default authentication
 
-                            if not client_id:
-                                print("⚠️  DATABRICKS_CLIENT_ID not set. Skipping checkpointer setup.")
-                                print("   Set this environment variable to enable checkpointer table creation.")
-                            else:
-                                # Initialize Lakebase connection
-                                lakebase_db = LakebaseDatabase(host=host)
+                            # Initialize connection with checkpointer setup
+                            conn_string = lakebase_db.initialize_connection(
+                                user=w.current_user.me().user_name,
+                                instance_name=lakebase_instance_name,
+                                database="databricks_postgres",
+                                setup_checkpointer=True
+                            )
 
-                                # Initialize connection with checkpointer setup
-                                conn_string = lakebase_db.initialize_connection(
-                                    user=client_id,
-                                    instance_name=lakebase_instance_name,
-                                    database="databricks_postgres",
-                                    setup_checkpointer=True
-                                )
-
-                                print(f"✅ PostgresSaver tables created successfully!")
-                                print(f"   Instance: {lakebase_instance_name}")
-                                print(f"   Database: databricks_postgres")
+                            print(f"✅ PostgresSaver tables created successfully!")
+                            print(f"   Instance: {lakebase_instance_name}")
+                            print(f"   Database: databricks_postgres")
+                            print(f"   User: {w.current_user.me().user_name}")
 
                         except Exception as e:
                             print(f"⚠️  Could not setup checkpointer tables: {str(e)}")

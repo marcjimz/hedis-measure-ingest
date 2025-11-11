@@ -601,29 +601,25 @@ if __name__ == "__main__":
         lakebase_instance = None
 
     # Get connection string if persistence enabled
-    # When deployed with DatabricksLakebase resource, Databricks injects credentials automatically
-    # The connection info is available via environment variables
+    # When deployed with DatabricksLakebase resource, use passthrough authentication
     conn_string = None
     if enable_persistence and lakebase_instance:
-        # Check for injected Lakebase connection environment variables
-        # Databricks automatically injects these when DatabricksLakebase resource is declared
-        lakebase_host = os.getenv("DATABRICKS_LAKEBASE_HOST")
-        lakebase_token = os.getenv("DATABRICKS_LAKEBASE_TOKEN") or os.getenv("DATABRICKS_TOKEN")
+        try:
+            from src.database.lakebase import LakebaseDatabase
+            from databricks.sdk import WorkspaceClient
 
-        if lakebase_host and lakebase_token:
-            # Build connection string using injected credentials
-            try:
-                from src.database.lakebase import LakebaseDatabase
-                lakebase_db = LakebaseDatabase(host=lakebase_host, token=lakebase_token)
-                conn_string = lakebase_db.get_connection_string(instance_name=lakebase_instance)
-                print(f"Lakebase connection initialized via passthrough authentication")
-            except Exception as e:
-                print(f"Warning: Could not connect to Lakebase: {e}")
-                print(f"Agent will run in stateless mode")
-                enable_persistence = False
-        else:
-            print(f"Note: Lakebase credentials not available (expected when running locally)")
-            print(f"Agent will run in stateless mode for local testing")
+            # Use passthrough authentication - credentials handled automatically
+            w = WorkspaceClient()
+            lakebase_db = LakebaseDatabase()  # Uses default authentication
+
+            conn_string = lakebase_db.initialize_connection(
+                user=w.current_user.me().user_name,
+                instance_name=lakebase_instance
+            )
+            print(f"Lakebase connection initialized via passthrough authentication")
+        except Exception as e:
+            print(f"Warning: Could not connect to Lakebase: {e}")
+            print(f"Agent will run in stateless mode")
             enable_persistence = False
 
     # Create agent

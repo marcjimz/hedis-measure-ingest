@@ -99,12 +99,10 @@ if ENABLE_PERSISTENCE and LAKEBASE_INSTANCE:
     from database.lakebase import LakebaseDatabase
     from langgraph.checkpoint.postgres import PostgresSaver
 
-    # For local testing, use current user's credentials
-    # For deployed endpoint, Databricks will use caller's credentials via passthrough
+    # Use passthrough authentication - no credentials required!
     w = WorkspaceClient()
-    workspace_host = f"https://{WORKSPACE_URL}"
 
-    lb_conn = LakebaseDatabase(host=workspace_host)
+    lb_conn = LakebaseDatabase()  # Uses default authentication (current user's token)
     conn_string = lb_conn.initialize_connection(
         user=w.current_user.me().user_name,
         instance_name=LAKEBASE_INSTANCE
