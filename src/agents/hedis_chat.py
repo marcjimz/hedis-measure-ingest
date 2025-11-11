@@ -1,17 +1,14 @@
 """
 HEDIS Chat Agent
 
-A production-ready LangGraph-based chat agent for HEDIS measure analysis with two modes:
-1. QnA Mode: Answer questions about HEDIS measures using vector search and measure definitions
-2. Compliance Mode: Evaluate patient encounters for HEDIS measure compliance
+A production-ready LangGraph-based chat agent for HEDIS measure analysis.
 
 Features:
-- Dual mode operation (QnA and Compliance)
-- Intent detection and patient data extraction
-- Integration with MeasureLookupTool and VectorSearchTool (Unity Catalog functions)
+- Answer questions about HEDIS measures using vector search and measure definitions
+- Integration with Unity Catalog functions (measure lookup, document search, query expansion)
 - Configurable persistence with PostgreSQL checkpointing
 - Streaming and non-streaming support
-- Comprehensive message handling and state management
+- Thread-based conversation management
 """
 
 from typing import Any, Generator, Optional, Sequence, Union, List, Dict
@@ -53,40 +50,23 @@ from mlflow.types.agent import (
 
 # Import HEDIS prompts
 try:
-    from src.agents.prompts.hedis import (
-        HEDIS_CHAT_AGENT_SYSTEM_PROMPT,
-        HEDIS_QNA_MODE_PROMPT,
-        HEDIS_COMPLIANCE_MODE_PROMPT,
-        HEDIS_INTENT_DETECTION_PROMPT,
-        HEDIS_INTENT_DETECTION_SCHEMA,
-        HEDIS_PATIENT_DATA_EXTRACTION_PROMPT,
-        HEDIS_PATIENT_DATA_EXTRACTION_SCHEMA,
-    )
+    from src.agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
 except ImportError:
     # Fallback for different import contexts
-    from agents.prompts.hedis import (
-        HEDIS_CHAT_AGENT_SYSTEM_PROMPT,
-        HEDIS_QNA_MODE_PROMPT,
-        HEDIS_COMPLIANCE_MODE_PROMPT,
-        HEDIS_INTENT_DETECTION_PROMPT,
-        HEDIS_INTENT_DETECTION_SCHEMA,
-        HEDIS_PATIENT_DATA_EXTRACTION_PROMPT,
-        HEDIS_PATIENT_DATA_EXTRACTION_SCHEMA,
-    )
+    from agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
 
 mlflow.autolog()
 
 
 class HEDISChatAgent(ChatAgent):
     """
-    HEDIS Chat Agent with dual-mode operation (QnA and Compliance).
+    HEDIS Chat Agent for answering questions about HEDIS measures.
 
     Supports:
-    - QnA Mode: Answer questions about HEDIS measures
-    - Compliance Mode: Evaluate patient encounters for compliance
+    - Answer questions about HEDIS measures using UC tools
     - Configurable persistence with PostgreSQL
     - Streaming and non-streaming responses
-    - Intent detection and patient data extraction
+    - Thread-based conversation management
     """
 
     def __init__(
@@ -95,8 +75,7 @@ class HEDISChatAgent(ChatAgent):
         tools: Union[Sequence[BaseTool], ToolNode],
         conn_string: Optional[str] = None,
         enable_persistence: bool = False,
-        effective_year: int = 2025,
-        default_mode: str = "QNA_MODE"
+        effective_year: Optional[int] = None
     ):
         """
         Initialize HEDIS Chat Agent.
@@ -106,15 +85,13 @@ class HEDISChatAgent(ChatAgent):
             tools: Tools for measure lookup and vector search
             conn_string: Database connection string for persistence (optional)
             enable_persistence: Enable PostgreSQL checkpointing (default: False)
-            effective_year: HEDIS measurement year (default: 2025)
-            default_mode: Default operation mode - "QNA_MODE" or "COMPLIANCE_MODE"
+            effective_year: HEDIS measurement year (optional, auto-detected if None)
         """
         self.model = model
         self.tools = tools
         self.conn_string = conn_string
         self.enable_persistence = enable_persistence
-        self.effective_year = effective_year
-        self.default_mode = default_mode
+        self.effective_year = effective_year or 2025  # Will be updated by factory
         self.thread_id = "default"
 
         # Validate configuration
@@ -159,121 +136,16 @@ class HEDISChatAgent(ChatAgent):
                 })
         return result
 
-    def _detect_intent(self, user_message: str) -> Dict[str, Any]:
+    def _build_system_prompt(self) -> str:
         """
-        Detect user intent to determine QnA vs Compliance mode.
-
-        Args:
-            user_message: User's message text
-
-        Returns:
-            Dict with mode, confidence, reasoning, measure_mentioned, patient_data_present
-        """
-        # Use a simple LLM call for intent detection
-        prompt = HEDIS_INTENT_DETECTION_PROMPT.format(user_message=user_message)
-
-        try:
-            # Use structured output if available
-            if hasattr(self.model, 'with_structured_output'):
-                intent_model = self.model.with_structured_output(
-                    HEDIS_INTENT_DETECTION_SCHEMA["schema"]
-                )
-                result = intent_model.invoke(prompt)
-                return result
-            else:
-                # Fallback to regular completion with JSON parsing
-                response = self.model.invoke(prompt)
-                content = response.content if hasattr(response, 'content') else str(response)
-                # Extract JSON from markdown code blocks if present
-                if "```json" in content:
-                    json_start = content.find("```json") + 7
-                    json_end = content.find("```", json_start)
-                    content = content[json_start:json_end].strip()
-                elif "```" in content:
-                    json_start = content.find("```") + 3
-                    json_end = content.find("```", json_start)
-                    content = content[json_start:json_end].strip()
-                return json.loads(content)
-        except Exception as e:
-            # Default to QnA mode on error
-            return {
-                "mode": self.default_mode,
-                "confidence": "low",
-                "reasoning": f"Intent detection failed: {str(e)}. Using default mode.",
-                "measure_mentioned": None,
-                "patient_data_present": False
-            }
-
-    def _extract_patient_data(self, user_message: str) -> Dict[str, Any]:
-        """
-        Extract structured patient data from user message for compliance evaluation.
-
-        Args:
-            user_message: User's message containing patient encounter data
-
-        Returns:
-            Structured patient encounter data
-        """
-        prompt = HEDIS_PATIENT_DATA_EXTRACTION_PROMPT.format(user_message=user_message)
-
-        try:
-            # Use structured output if available
-            if hasattr(self.model, 'with_structured_output'):
-                extraction_model = self.model.with_structured_output(
-                    HEDIS_PATIENT_DATA_EXTRACTION_SCHEMA["schema"]
-                )
-                result = extraction_model.invoke(prompt)
-                return result
-            else:
-                # Fallback to regular completion with JSON parsing
-                response = self.model.invoke(prompt)
-                content = response.content if hasattr(response, 'content') else str(response)
-                # Extract JSON from markdown code blocks if present
-                if "```json" in content:
-                    json_start = content.find("```json") + 7
-                    json_end = content.find("```", json_start)
-                    content = content[json_start:json_end].strip()
-                elif "```" in content:
-                    json_start = content.find("```") + 3
-                    json_end = content.find("```", json_start)
-                    content = content[json_start:json_end].strip()
-                return json.loads(content)
-        except Exception as e:
-            # Return empty patient data structure on error
-            return {
-                "patient_demographics": {},
-                "enrollment": {},
-                "encounter_details": {},
-                "clinical_codes": {},
-                "diagnoses": [],
-                "procedures": [],
-                "exclusion_indicators": {},
-                "measure_context": {},
-                "extraction_error": str(e)
-            }
-
-    def _build_system_prompt(self, mode: str, intent_data: Optional[Dict] = None) -> str:
-        """
-        Build the system prompt based on mode and context.
-
-        Args:
-            mode: Operation mode (QNA_MODE or COMPLIANCE_MODE)
-            intent_data: Optional intent detection data
+        Build the system prompt for the agent.
 
         Returns:
             Formatted system prompt
         """
-        base_prompt = HEDIS_CHAT_AGENT_SYSTEM_PROMPT.format(
+        return HEDIS_CHAT_AGENT_SYSTEM_PROMPT.format(
             effective_year=self.effective_year
         )
-
-        mode_context = ""
-        if mode == "QNA_MODE":
-            mode_context = "\n\n**CURRENT MODE: Question & Answer**\nYou are answering questions about HEDIS measures. Use vector search and measure lookup tools to find relevant information."
-        elif mode == "COMPLIANCE_MODE":
-            mode_context = "\n\n**CURRENT MODE: Compliance Determination**\nYou are evaluating a patient encounter for HEDIS measure compliance. Follow the step-by-step evaluation process."
-
-        return base_prompt + mode_context
 
     def _parse_message(self, msg) -> ChatAgentMessage:
         """
@@ -346,15 +218,13 @@ class HEDISChatAgent(ChatAgent):
 
     def _create_agent_graph(
         self,
-        checkpointer: Optional[PostgresSaver] = None,
-        system_prompt: Optional[str] = None
+        checkpointer: Optional[PostgresSaver] = None
     ) -> CompiledStateGraph:
         """
         Create the LangGraph agent with optional checkpointing.
 
         Args:
             checkpointer: Optional PostgresSaver for persistence
-            system_prompt: Optional system prompt override
 
         Returns:
             Compiled LangGraph state graph
@@ -362,9 +232,8 @@ class HEDISChatAgent(ChatAgent):
         # Bind tools to model
         model_with_tools = self.model.bind_tools(self.tools) if self.tools else self.model
 
-        # Use default system prompt if not provided
-        if system_prompt is None:
-            system_prompt = self._build_system_prompt(self.default_mode)
+        # Build system prompt
+        system_prompt = self._build_system_prompt()
 
         def should_continue(state: ChatAgentState):
             """Determine if we should continue to tools or end."""
@@ -434,7 +303,7 @@ class HEDISChatAgent(ChatAgent):
         Args:
             messages: List of chat messages
             context: Optional chat context
-            custom_inputs: Optional custom inputs (thread_id, mode, etc.)
+            custom_inputs: Optional custom inputs (thread_id)
 
         Returns:
             ChatAgentResponse with messages and custom outputs
@@ -442,34 +311,6 @@ class HEDISChatAgent(ChatAgent):
         # Extract configuration from custom_inputs
         custom_inputs = custom_inputs or {}
         thread_id = custom_inputs.get("thread_id")
-        force_mode = custom_inputs.get("mode")  # Optional mode override
-
-        # Get the last user message for intent detection
-        last_user_message = None
-        for msg in reversed(messages):
-            msg_dict = msg if isinstance(msg, dict) else msg.model_dump_compat()
-            if msg_dict.get("role") == "user":
-                last_user_message = msg_dict.get("content", "")
-                break
-
-        # Detect intent and determine mode
-        if force_mode:
-            mode = force_mode
-            intent_data = {"mode": mode, "confidence": "high", "reasoning": "Mode forced by custom_inputs"}
-        elif last_user_message:
-            intent_data = self._detect_intent(last_user_message)
-            mode = intent_data.get("mode", self.default_mode)
-        else:
-            mode = self.default_mode
-            intent_data = {"mode": mode, "confidence": "low", "reasoning": "No user message found"}
-
-        # Extract patient data if in compliance mode
-        patient_data = None
-        if mode == "COMPLIANCE_MODE" and last_user_message:
-            patient_data = self._extract_patient_data(last_user_message)
-
-        # Build system prompt for this mode
-        system_prompt = self._build_system_prompt(mode, intent_data)
 
         # Handle persistence and threading
         if self.enable_persistence and self.conn_string:
@@ -486,7 +327,7 @@ class HEDISChatAgent(ChatAgent):
 
             with Connection.connect(self.conn_string) as conn:
                 checkpointer = PostgresSaver(conn)
-                agent = self._create_agent_graph(checkpointer, system_prompt)
+                agent = self._create_agent_graph(checkpointer)
 
                 converted_messages = self._convert_messages_to_dict(messages_to_send)
                 result = agent.invoke({"messages": converted_messages}, config)
@@ -499,7 +340,7 @@ class HEDISChatAgent(ChatAgent):
         else:
             # Non-persistent mode - no threading
             thread_id = thread_id or str(uuid.uuid4())
-            agent = self._create_agent_graph(None, system_prompt)
+            agent = self._create_agent_graph(None)
 
             converted_messages = self._convert_messages_to_dict(messages)
             result = agent.invoke({"messages": converted_messages})
@@ -513,14 +354,9 @@ class HEDISChatAgent(ChatAgent):
         # Build custom outputs
         custom_outputs = {
             "thread_id": thread_id,
-            "mode": mode,
-            "intent_data": intent_data,
             "effective_year": self.effective_year,
             "persistence_enabled": self.enable_persistence
         }
-
-        if patient_data:
-            custom_outputs["patient_data"] = patient_data
 
         # Return response
         try:
@@ -545,7 +381,7 @@ class HEDISChatAgent(ChatAgent):
         Args:
             messages: List of chat messages
             context: Optional chat context
-            custom_inputs: Optional custom inputs (thread_id, mode, etc.)
+            custom_inputs: Optional custom inputs (thread_id)
 
         Yields:
             ChatAgentChunk objects with message deltas
@@ -553,34 +389,6 @@ class HEDISChatAgent(ChatAgent):
         # Extract configuration
         custom_inputs = custom_inputs or {}
         thread_id = custom_inputs.get("thread_id")
-        force_mode = custom_inputs.get("mode")
-
-        # Get last user message for intent detection
-        last_user_message = None
-        for msg in reversed(messages):
-            msg_dict = msg if isinstance(msg, dict) else msg.model_dump_compat()
-            if msg_dict.get("role") == "user":
-                last_user_message = msg_dict.get("content", "")
-                break
-
-        # Detect intent and determine mode
-        if force_mode:
-            mode = force_mode
-            intent_data = {"mode": mode, "confidence": "high", "reasoning": "Mode forced by custom_inputs"}
-        elif last_user_message:
-            intent_data = self._detect_intent(last_user_message)
-            mode = intent_data.get("mode", self.default_mode)
-        else:
-            mode = self.default_mode
-            intent_data = {"mode": mode, "confidence": "low", "reasoning": "No user message found"}
-
-        # Extract patient data if in compliance mode
-        patient_data = None
-        if mode == "COMPLIANCE_MODE" and last_user_message:
-            patient_data = self._extract_patient_data(last_user_message)
-
-        # Build system prompt
-        system_prompt = self._build_system_prompt(mode, intent_data)
 
         # Handle persistence and threading
         if self.enable_persistence and self.conn_string:
@@ -594,7 +402,7 @@ class HEDISChatAgent(ChatAgent):
 
             with Connection.connect(self.conn_string) as conn:
                 checkpointer = PostgresSaver(conn)
-                agent = self._create_agent_graph(checkpointer, system_prompt)
+                agent = self._create_agent_graph(checkpointer)
 
                 converted_messages = self._convert_messages_to_dict(messages_to_send)
 
@@ -606,7 +414,7 @@ class HEDISChatAgent(ChatAgent):
         else:
             # Non-persistent streaming
             thread_id = thread_id or str(uuid.uuid4())
-            agent = self._create_agent_graph(None, system_prompt)
+            agent = self._create_agent_graph(None)
 
             converted_messages = self._convert_messages_to_dict(messages)
 
@@ -619,14 +427,9 @@ class HEDISChatAgent(ChatAgent):
         # Yield final metadata chunk
         custom_outputs = {
             "thread_id": thread_id,
-            "mode": mode,
-            "intent_data": intent_data,
             "effective_year": self.effective_year,
             "persistence_enabled": self.enable_persistence
         }
-
-        if patient_data:
-            custom_outputs["patient_data"] = patient_data
 
         yield ChatAgentChunk(delta={"custom_outputs": custom_outputs})
 
@@ -648,6 +451,34 @@ class HEDISChatAgentFactory:
     ]
 
     @staticmethod
+    def _get_latest_effective_year(catalog_name: str, schema_name: str) -> int:
+        """
+        Query the database to get the latest effective_year from hedis_measures_definitions.
+
+        Args:
+            catalog_name: Unity Catalog catalog name
+            schema_name: Unity Catalog schema name
+
+        Returns:
+            Latest effective_year as integer, or 2025 if query fails
+        """
+        try:
+            from pyspark.sql import SparkSession
+            spark = SparkSession.builder.getOrCreate()
+
+            result = spark.sql(f"""
+                SELECT MAX(effective_year) as max_year
+                FROM {catalog_name}.{schema_name}.hedis_measures_definitions
+            """).collect()
+
+            if result and result[0].max_year:
+                return int(result[0].max_year)
+        except Exception as e:
+            print(f"Warning: Could not auto-detect effective_year: {e}")
+
+        return 2025  # Fallback
+
+    @staticmethod
     def create(
         *,
         endpoint_name: str,
@@ -656,8 +487,7 @@ class HEDISChatAgentFactory:
         schema_name: Optional[str] = None,
         conn_string: Optional[str] = None,
         enable_persistence: bool = False,
-        effective_year: int = 2025,
-        default_mode: str = "QNA_MODE",
+        effective_year: Optional[int] = None,
         databricks_function_client: Optional[DatabricksFunctionClient] = None,
     ) -> ChatAgent:
         """
@@ -670,8 +500,7 @@ class HEDISChatAgentFactory:
             schema_name: Unity Catalog schema name (for namespaced functions)
             conn_string: Database connection string (required if enable_persistence=True)
             enable_persistence: Enable PostgreSQL checkpointing
-            effective_year: HEDIS measurement year
-            default_mode: Default operation mode (QNA_MODE or COMPLIANCE_MODE)
+            effective_year: HEDIS measurement year (optional, auto-detected if None)
             databricks_function_client: Optional Databricks function client
 
         Returns:
@@ -680,6 +509,14 @@ class HEDISChatAgentFactory:
         # Validate persistence configuration
         if enable_persistence and not conn_string:
             raise ValueError("Connection string required when persistence is enabled")
+
+        # Auto-detect effective_year if not provided
+        if effective_year is None and catalog_name and schema_name:
+            effective_year = HEDISChatAgentFactory._get_latest_effective_year(catalog_name, schema_name)
+            print(f"Auto-detected effective_year: {effective_year}")
+        elif effective_year is None:
+            effective_year = 2025
+            print(f"Using default effective_year: {effective_year}")
 
         # Wire UC function client
         client = databricks_function_client or DatabricksFunctionClient()
@@ -706,15 +543,14 @@ class HEDISChatAgentFactory:
             tools=tools,
             conn_string=conn_string,
             enable_persistence=enable_persistence,
-            effective_year=effective_year,
-            default_mode=default_mode
+            effective_year=effective_year
         )
 
     @staticmethod
     def from_defaults(
         conn_string: Optional[str] = None,
         enable_persistence: bool = False,
-        effective_year: int = 2025
+        effective_year: Optional[int] = None
     ) -> ChatAgent:
         """
         Create HEDIS Chat Agent with default settings.
@@ -722,14 +558,14 @@ class HEDISChatAgentFactory:
         Args:
             conn_string: Optional database connection string
             enable_persistence: Enable persistence (default: False)
-            effective_year: HEDIS measurement year (default: 2025)
+            effective_year: HEDIS measurement year (optional, auto-detected if None)
 
         Returns:
             HEDISChatAgent with default configuration
         """
         endpoint = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
         catalog = os.getenv("UC_CATALOG", "main")
-        schema = os.getenv("UC_SCHEMA", "hedis_pipeline")
+        schema = os.getenv("UC_SCHEMA", "hedis_measurements")
 
         return HEDISChatAgentFactory.create(
             endpoint_name=endpoint,
@@ -737,8 +573,7 @@ class HEDISChatAgentFactory:
             schema_name=schema,
             conn_string=conn_string,
             enable_persistence=enable_persistence,
-            effective_year=effective_year,
-            default_mode="QNA_MODE"
+            effective_year=effective_year
         )
 
 
@@ -751,8 +586,9 @@ if __name__ == "__main__":
     # Get configuration from environment
     endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
     catalog_name = os.getenv("UC_CATALOG", "main")
-    schema_name = os.getenv("UC_SCHEMA", "hedis_pipeline")
-    effective_year = int(os.getenv("EFFECTIVE_YEAR", "2025"))
+    schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
+    effective_year_str = os.getenv("EFFECTIVE_YEAR")
+    effective_year = int(effective_year_str) if effective_year_str else None
     enable_persistence = os.getenv("ENABLE_PERSISTENCE", "false").lower() == "true"
 
     # Get connection string if persistence enabled
@@ -778,8 +614,7 @@ if __name__ == "__main__":
         schema_name=schema_name,
         conn_string=conn_string,
         enable_persistence=enable_persistence,
-        effective_year=effective_year,
-        default_mode="QNA_MODE"
+        effective_year=effective_year
     )
 
     # Set as MLflow model
@@ -789,6 +624,5 @@ if __name__ == "__main__":
     print(f"  - Endpoint: {endpoint_name}")
     print(f"  - Catalog: {catalog_name}")
     print(f"  - Schema: {schema_name}")
-    print(f"  - Effective Year: {effective_year}")
+    print(f"  - Effective Year: {AGENT.effective_year}")
     print(f"  - Persistence: {enable_persistence}")
-    print(f"  - Mode: QNA_MODE (with automatic intent detection)")
