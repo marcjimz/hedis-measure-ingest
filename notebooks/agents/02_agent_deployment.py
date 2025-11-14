@@ -213,30 +213,6 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 🌊 Example 3: Streaming Response
-# MAGIC
-# MAGIC Demonstrate streaming capabilities for real-time responses.
-
-# COMMAND ----------
-
-print("User: What are the exclusions for the Colorectal Cancer Screening (COL) measure?\n")
-print("Agent (streaming): ", end='')
-
-for chunk in agent.predict_stream(
-    messages=[
-        {"role": "user", "content": "What are the exclusions for the Colorectal Cancer Screening (COL) measure?"}
-    ]
-):
-    if hasattr(chunk, 'delta') and chunk.delta:
-        if isinstance(chunk.delta, dict):
-            if 'content' in chunk.delta and chunk.delta['content']:
-                print(chunk.delta['content'], end='', flush=True)
-
-print("\n")
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## 📝 Register Agent with MLflow
 # MAGIC
 # MAGIC Log the agent to MLflow for tracking and deployment. The agent includes all necessary dependencies and configuration.
