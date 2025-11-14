@@ -42,7 +42,7 @@ from datetime import datetime
 from databricks.sdk import WorkspaceClient
 import mlflow
 import mlflow.pyfunc
-from mlflow.models.resources import DatabricksServingEndpoint, DatabricksLakebase, DatabricksFunction
+from mlflow.models.resources import DatabricksServingEndpoint, DatabricksLakebase, DatabricksFunction, DatabricksVectorSearchIndex
 
 # Add src directory to Python path
 repo_root = pathlib.Path().absolute().parent.parent
@@ -57,6 +57,7 @@ dbutils.widgets.text("endpoint_name", "databricks-claude-opus-4-1", "Model Servi
 dbutils.widgets.text("effective_year", "", "Effective Year (optional - auto-detected if empty)")
 dbutils.widgets.dropdown("enable_persistence", "Yes", ["Yes", "No"], "Enable Persistence")
 dbutils.widgets.text("lakebase_instance", "hedis-agent-pg", "Lakebase Instance (if persistence enabled)")
+dbutils.widgets.text("vs_index_name", "hedis_measures_index", "Vector Search Index Name")
 
 # Get configuration from widgets
 CATALOG_NAME = dbutils.widgets.get("catalog_name")
@@ -67,6 +68,10 @@ EFFECTIVE_YEAR = int(EFFECTIVE_YEAR_STR) if EFFECTIVE_YEAR_STR else None
 ENABLE_PERSISTENCE = dbutils.widgets.get("enable_persistence") == "Yes"
 LAKEBASE_INSTANCE = dbutils.widgets.get("lakebase_instance")
 WORKSPACE_URL = dbutils.notebook.entry_point.getDbutils().notebook().getContext().browserHostName().get()
+VS_INDEX_NAME = dbutils.widgets.get("vs_index_name")
+
+# Construct full vector search index path from catalog and schema
+VS_INDEX = f"{CATALOG_NAME}.{SCHEMA_NAME}.{VS_INDEX_NAME}"
 
 # Set environment variables for LOCAL agent testing (not needed for deployed agent)
 os.environ["ENDPOINT_NAME"] = ENDPOINT_NAME
@@ -238,6 +243,7 @@ agent_config = {
 # Create resources list - includes serving endpoint and optionally Lakebase
 resources = [
     DatabricksServingEndpoint(endpoint_name=ENDPOINT_NAME),
+    DatabricksVectorSearchIndex(index_name=VS_INDEX),
     DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_definition_lookup"),
     DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_document_search"),
     DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_search_expansion"),
@@ -434,7 +440,3 @@ try:
     print(response.messages[-1]['content'])
 except Exception as e:
     print(f"❌ Error testing endpoint: {e}")
-
-# COMMAND ----------
-
-
