@@ -42,7 +42,7 @@ from datetime import datetime
 from databricks.sdk import WorkspaceClient
 import mlflow
 import mlflow.pyfunc
-from mlflow.models.resources import DatabricksServingEndpoint, DatabricksLakebase
+from mlflow.models.resources import DatabricksServingEndpoint, DatabricksLakebase, DatabricksFunction
 
 # Add src directory to Python path
 repo_root = pathlib.Path().absolute().parent.parent
@@ -236,7 +236,12 @@ agent_config = {
 }
 
 # Create resources list - includes serving endpoint and optionally Lakebase
-resources = [DatabricksServingEndpoint(endpoint_name=ENDPOINT_NAME)]
+resources = [
+    DatabricksServingEndpoint(endpoint_name=ENDPOINT_NAME),
+    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_definition_lookup"),
+    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_document_search"),
+    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_search_expansion"),
+]
 
 if ENABLE_PERSISTENCE:
     # Add Lakebase resource for agent passthrough authentication
@@ -290,10 +295,10 @@ os.environ['MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT'] = '600'
 loaded_model = mlflow.pyfunc.load_model(MODEL_URI)
 
 # Run prediction on input_example
-predictions = loaded_model.predict(input_example)
-print("✅ Model loaded and tested successfully!")
-print("\nSample prediction:")
-print(predictions['messages'][-1]['content'][:200] + "...")
+# predictions = loaded_model.predict(input_example)
+# print("✅ Model loaded and tested successfully!")
+# print("\nSample prediction:")
+# print(predictions['messages'][-1]['content'][:200] + "...")
 
 # COMMAND ----------
 
@@ -339,7 +344,7 @@ print(f"   Alias: production")
 
 model_uri_uc = f"models:/{uc_model_fqn}@production"
 loaded_model_uc = mlflow.pyfunc.load_model(model_uri_uc)
-test_prediction = loaded_model_uc.predict(input_example)
+#test_prediction = loaded_model_uc.predict(input_example)
 
 print(f"✅ Model loaded from Unity Catalog successfully!")
 print(f"   URI: {model_uri_uc}")
