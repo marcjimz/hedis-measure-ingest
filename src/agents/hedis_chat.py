@@ -249,13 +249,25 @@ class HEDISChatAgent(ChatAgent):
 
         def call_model(state: ChatAgentState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
+            from langchain_core.messages import SystemMessage
+
             messages_with_system = state["messages"]
 
             # Prepend system prompt if not already present
             if system_prompt:
-                if not messages_with_system or messages_with_system[0].get("role") != "system":
+                # Check if first message is already a system message
+                has_system = False
+                if messages_with_system:
+                    first_msg = messages_with_system[0]
+                    if isinstance(first_msg, SystemMessage):
+                        has_system = True
+                    elif isinstance(first_msg, dict) and first_msg.get("role") == "system":
+                        has_system = True
+
+                if not has_system:
+                    # Prepend SystemMessage object
                     messages_with_system = [
-                        {"role": "system", "content": system_prompt}
+                        SystemMessage(content=system_prompt)
                     ] + messages_with_system
 
             response = model_with_tools.invoke(messages_with_system, config)
