@@ -225,7 +225,7 @@ class HEDISChatAgent(ChatAgent):
         checkpointer: Optional[PostgresSaver] = None
     ) -> CompiledStateGraph:
         """
-        Create the LangGraph agent with optional checkpointing.
+        Create the LangGraph agent with optional checkpointing and parallel tool execution.
 
         Args:
             checkpointer: Optional PostgresSaver for persistence
@@ -238,19 +238,6 @@ class HEDISChatAgent(ChatAgent):
 
         # Build system prompt
         system_prompt = self._build_system_prompt()
-
-        def should_continue(state: ChatAgentState):
-            """Determine if we should continue to tools or end."""
-            messages = state["messages"]
-            last = messages[-1]
-
-            if hasattr(last, 'tool_calls'):
-                return "continue" if last.tool_calls else "end"
-            elif isinstance(last, dict):
-                return "continue" if last.get("tool_calls") else "end"
-            else:
-                additional_kwargs = getattr(last, 'additional_kwargs', {})
-                return "continue" if additional_kwargs.get("tool_calls") else "end"
 
         def call_model(state: ChatAgentState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
@@ -271,15 +258,16 @@ class HEDISChatAgent(ChatAgent):
         workflow.add_node("agent", call_model)
 
         if self.tools:
-            # Add tools node
-            workflow.add_node("tools", ChatAgentToolNode(self.tools))
+            # Add tools node with parallel execution enabled
+            # Use standard ToolNode which executes tools in parallel by default
+            workflow.add_node("tools", ToolNode(self.tools))
             workflow.set_entry_point("agent")
 
             # Agent -> Tools (conditionally) -> Agent
+            # Inline conditional logic to avoid separate evaluation step
             workflow.add_conditional_edges(
                 "agent",
-                should_continue,
-                {"continue": "tools", "end": END}
+                lambda state: "tools" if self._has_tool_calls(state["messages"][-1]) else END,
             )
             workflow.add_edge("tools", "agent")
         else:
@@ -294,6 +282,24 @@ class HEDISChatAgent(ChatAgent):
             graph = workflow.compile()
 
         return graph
+
+    def _has_tool_calls(self, message) -> bool:
+        """
+        Check if a message has tool calls without being traced as a separate step.
+
+        Args:
+            message: Last message to check for tool calls
+
+        Returns:
+            True if message has tool calls, False otherwise
+        """
+        if hasattr(message, 'tool_calls') and message.tool_calls:
+            return True
+        elif isinstance(message, dict) and message.get("tool_calls"):
+            return True
+        elif hasattr(message, 'additional_kwargs'):
+            return bool(message.additional_kwargs.get("tool_calls"))
+        return False
 
     def predict(
         self,
