@@ -102,42 +102,50 @@ class HEDISChatAgent(ChatAgent):
         if enable_persistence and not (conn_string or connection_pool):
             raise ValueError("Connection string or connection pool required when persistence is enabled")
 
-    def _convert_messages_to_dict(self, messages: List[Union[ChatAgentMessage, dict]]) -> List[dict]:
+    def _convert_to_langchain_messages(self, messages: List[Union[ChatAgentMessage, dict]]):
         """
-        Convert messages to dict format, handling both ChatAgentMessage objects and dicts.
+        Convert messages to LangChain message objects for graph execution.
+
+        Args:
+            messages: List of ChatAgentMessage or dict messages
+
+        Returns:
+            List of LangChain message objects (HumanMessage, AIMessage, etc.)
         """
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+
         result = []
         for msg in messages:
+            # Extract message data
             if isinstance(msg, dict):
-                # Already a dict, ensure it has an ID
-                if "id" not in msg:
-                    msg["id"] = str(uuid.uuid4())
-                result.append(msg)
-            elif hasattr(msg, 'model_dump_compat'):
-                # MLflow ChatAgentMessage with model_dump_compat method
-                msg_dict = msg.model_dump_compat(exclude_none=True)
-                if "id" not in msg_dict:
-                    msg_dict["id"] = str(uuid.uuid4())
-                result.append(msg_dict)
-            elif hasattr(msg, 'model_dump'):
-                # Pydantic v2 style
-                msg_dict = msg.model_dump(exclude_none=True)
-                if "id" not in msg_dict:
-                    msg_dict["id"] = str(uuid.uuid4())
-                result.append(msg_dict)
-            elif hasattr(msg, 'dict'):
-                # Pydantic v1 style
-                msg_dict = msg.dict(exclude_none=True)
-                if "id" not in msg_dict:
-                    msg_dict["id"] = str(uuid.uuid4())
-                result.append(msg_dict)
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                tool_calls = msg.get("tool_calls")
+                tool_call_id = msg.get("tool_call_id")
+                name = msg.get("name")
             else:
-                # Fallback: try to extract role and content
-                result.append({
-                    "id": getattr(msg, 'id', str(uuid.uuid4())),
-                    "role": getattr(msg, 'role', 'user'),
-                    "content": getattr(msg, 'content', str(msg))
-                })
+                # ChatAgentMessage or similar object
+                role = getattr(msg, 'role', 'user')
+                content = getattr(msg, 'content', '')
+                tool_calls = getattr(msg, 'tool_calls', None)
+                tool_call_id = getattr(msg, 'tool_call_id', None)
+                name = getattr(msg, 'name', None)
+
+            # Create appropriate LangChain message type
+            if role == "system":
+                result.append(SystemMessage(content=content))
+            elif role == "assistant":
+                # AIMessage with optional tool calls
+                if tool_calls:
+                    result.append(AIMessage(content=content, tool_calls=tool_calls))
+                else:
+                    result.append(AIMessage(content=content))
+            elif role == "tool":
+                # ToolMessage needs tool_call_id
+                result.append(ToolMessage(content=content, tool_call_id=tool_call_id or str(uuid.uuid4()), name=name))
+            else:  # "user" or default
+                result.append(HumanMessage(content=content))
+
         return result
 
     def _build_system_prompt(self) -> str:
@@ -342,8 +350,8 @@ class HEDISChatAgent(ChatAgent):
                     checkpointer = PostgresSaver(conn)
                     agent = self._create_agent_graph(checkpointer)
 
-                    converted_messages = self._convert_messages_to_dict(messages_to_send)
-                    result = agent.invoke({"messages": converted_messages}, config)
+                    langchain_messages = self._convert_to_langchain_messages(messages_to_send)
+                    result = agent.invoke({"messages": langchain_messages}, config)
 
                     # Parse output messages
                     out_messages = []
@@ -356,8 +364,8 @@ class HEDISChatAgent(ChatAgent):
                     checkpointer = PostgresSaver(conn)
                     agent = self._create_agent_graph(checkpointer)
 
-                    converted_messages = self._convert_messages_to_dict(messages_to_send)
-                    result = agent.invoke({"messages": converted_messages}, config)
+                    langchain_messages = self._convert_to_langchain_messages(messages_to_send)
+                    result = agent.invoke({"messages": langchain_messages}, config)
 
                     # Parse output messages
                     out_messages = []
@@ -369,8 +377,8 @@ class HEDISChatAgent(ChatAgent):
             thread_id = thread_id or str(uuid.uuid4())
             agent = self._create_agent_graph(None)
 
-            converted_messages = self._convert_messages_to_dict(messages)
-            result = agent.invoke({"messages": converted_messages})
+            langchain_messages = self._convert_to_langchain_messages(messages)
+            result = agent.invoke({"messages": langchain_messages})
 
             # Parse output messages
             out_messages = []
@@ -434,9 +442,9 @@ class HEDISChatAgent(ChatAgent):
                     checkpointer = PostgresSaver(conn)
                     agent = self._create_agent_graph(checkpointer)
 
-                    converted_messages = self._convert_messages_to_dict(messages_to_send)
+                    langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": converted_messages}, config, stream_mode="values"):
+                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
                         if chunk.get("messages"):
                             for msg in chunk["messages"]:
                                 parsed_msg = self._parse_message(msg)
@@ -447,9 +455,9 @@ class HEDISChatAgent(ChatAgent):
                     checkpointer = PostgresSaver(conn)
                     agent = self._create_agent_graph(checkpointer)
 
-                    converted_messages = self._convert_messages_to_dict(messages_to_send)
+                    langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": converted_messages}, config, stream_mode="values"):
+                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
                         if chunk.get("messages"):
                             for msg in chunk["messages"]:
                                 parsed_msg = self._parse_message(msg)
@@ -459,9 +467,9 @@ class HEDISChatAgent(ChatAgent):
             thread_id = thread_id or str(uuid.uuid4())
             agent = self._create_agent_graph(None)
 
-            converted_messages = self._convert_messages_to_dict(messages)
+            langchain_messages = self._convert_to_langchain_messages(messages)
 
-            for chunk in agent.stream({"messages": converted_messages}, stream_mode="values"):
+            for chunk in agent.stream({"messages": langchain_messages}, stream_mode="values"):
                 if chunk.get("messages"):
                     for msg in chunk["messages"]:
                         parsed_msg = self._parse_message(msg)
