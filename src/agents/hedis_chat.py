@@ -669,9 +669,9 @@ if __name__ == "__main__":
         enable_persistence = False
         lakebase_instance = None
 
-    # Get connection string if persistence enabled
+    # Get connection pool if persistence enabled
     # When deployed with DatabricksLakebase resource, use passthrough authentication
-    conn_string = None
+    connection_pool = None
     if enable_persistence and lakebase_instance:
         try:
             from src.database.lakebase import LakebaseDatabase
@@ -681,11 +681,15 @@ if __name__ == "__main__":
             w = WorkspaceClient()
             lakebase_db = LakebaseDatabase()  # Uses default authentication
 
-            conn_string = lakebase_db.initialize_connection(
+            lakebase_db.initialize_connection(
                 user=w.current_user.me().user_name,
-                instance_name=lakebase_instance
+                instance_name=lakebase_instance,
+                setup_checkpointer=True
             )
-            print(f"Lakebase connection initialized via passthrough authentication")
+
+            # Get connection pool with auto-refresh
+            connection_pool = lakebase_db.get_connection_pool()
+            print(f"Lakebase connection pool initialized via passthrough authentication")
         except Exception as e:
             print(f"Warning: Could not connect to Lakebase: {e}")
             print(f"Agent will run in stateless mode")
@@ -696,7 +700,7 @@ if __name__ == "__main__":
         endpoint_name=endpoint_name,
         catalog_name=catalog_name,
         schema_name=schema_name,
-        conn_string=conn_string,
+        connection_pool=connection_pool,
         enable_persistence=enable_persistence,
         effective_year=effective_year
     )

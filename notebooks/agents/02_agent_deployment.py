@@ -409,7 +409,40 @@ Review App: {deployment_info.review_app_url}
 # COMMAND ----------
 
 from mlflow.deployments import get_deploy_client
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.serving import EndpointStateReady
 
+# Wait for endpoint to be ready
+w = WorkspaceClient()
+print(f"⏳ Waiting for endpoint '{deployment_info.endpoint_name}' to be ready...")
+print(f"   This can take up to 15 minutes for initial deployment.")
+
+max_wait_time = 1200  # 20 minutes
+wait_interval = 30  # Check every 30 seconds
+elapsed_time = 0
+
+while elapsed_time < max_wait_time:
+    try:
+        endpoint_status = w.serving_endpoints.get(name=deployment_info.endpoint_name)
+
+        if endpoint_status.state and endpoint_status.state.ready == EndpointStateReady.READY:
+            print(f"\n✅ Endpoint is READY after {elapsed_time} seconds!")
+            break
+        else:
+            current_state = endpoint_status.state.ready if endpoint_status.state else "UNKNOWN"
+            print(f"   Status: {current_state} - waiting {wait_interval}s... (elapsed: {elapsed_time}s)")
+            time.sleep(wait_interval)
+            elapsed_time += wait_interval
+    except Exception as e:
+        print(f"   Error checking status: {e} - retrying in {wait_interval}s...")
+        time.sleep(wait_interval)
+        elapsed_time += wait_interval
+else:
+    print(f"\n⚠️  Endpoint did not become ready within {max_wait_time} seconds.")
+    print(f"   Check status manually: https://{WORKSPACE_URL}/ml/endpoints/{deployment_info.endpoint_name}")
+
+# Test the deployed endpoint
+print("\n🧪 Testing deployed endpoint...")
 deploy_client = get_deploy_client()
 
 # Query the deployed agent
