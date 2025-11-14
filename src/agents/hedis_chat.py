@@ -467,14 +467,8 @@ class HEDISChatAgent(ChatAgent):
                         parsed_msg = self._parse_message(msg)
                         yield ChatAgentChunk(delta=parsed_msg.__dict__)
 
-        # Yield final metadata chunk
-        custom_outputs = {
-            "thread_id": thread_id,
-            "effective_year": self.effective_year,
-            "persistence_enabled": self.enable_persistence
-        }
-
-        yield ChatAgentChunk(delta={"custom_outputs": custom_outputs})
+        # Don't yield custom_outputs in streaming mode as it causes validation errors
+        # Custom outputs can be retrieved from the final response if needed
 
 
 # ============================================================================
