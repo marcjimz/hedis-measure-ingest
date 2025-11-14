@@ -196,21 +196,31 @@ class HEDISChatAgent(ChatAgent):
             else:
                 role = getattr(msg, 'role', 'assistant')
 
-            # Handle tool calls
+            # Handle tool calls - transform LangChain format to ChatAgentMessage format
             tool_calls = None
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                 if isinstance(msg.tool_calls, list):
                     tool_calls = []
                     for tc in msg.tool_calls:
-                        if hasattr(tc, 'dict'):
-                            tool_calls.append(tc.dict())
-                        elif isinstance(tc, dict):
-                            tool_calls.append(tc)
+                        # LangChain tool_call: {'name': str, 'args': dict, 'id': str, 'type': str}
+                        # ChatAgentMessage needs: {'id': str, 'type': 'function', 'function': {'name': str, 'arguments': str}}
+                        if isinstance(tc, dict):
+                            tool_calls.append({
+                                'id': tc.get('id', str(uuid.uuid4())),
+                                'type': 'function',
+                                'function': {
+                                    'name': tc.get('name', ''),
+                                    'arguments': json.dumps(tc.get('args', {}))
+                                }
+                            })
                         else:
                             tool_calls.append({
                                 'id': getattr(tc, 'id', str(uuid.uuid4())),
-                                'type': getattr(tc, 'type', 'function'),
-                                'function': getattr(tc, 'function', {})
+                                'type': 'function',
+                                'function': {
+                                    'name': getattr(tc, 'name', ''),
+                                    'arguments': json.dumps(getattr(tc, 'args', {}))
+                                }
                             })
                 else:
                     tool_calls = msg.tool_calls
