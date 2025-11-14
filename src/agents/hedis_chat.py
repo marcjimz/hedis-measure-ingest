@@ -36,11 +36,10 @@ from databricks_langchain import (
 from langchain_core.language_models import LanguageModelLike
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, StateGraph, MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt.tool_node import ToolNode
 from langgraph.checkpoint.postgres import PostgresSaver
-from mlflow.langchain.chat_agent_langgraph import ChatAgentState, ChatAgentToolNode
 from mlflow.pyfunc import ChatAgent
 from mlflow.types.agent import (
     ChatAgentChunk,
@@ -247,7 +246,7 @@ class HEDISChatAgent(ChatAgent):
         # Build system prompt
         system_prompt = self._build_system_prompt()
 
-        def call_model(state: ChatAgentState, config: RunnableConfig):
+        def call_model(state: MessagesState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
             from langchain_core.messages import SystemMessage
 
@@ -274,7 +273,7 @@ class HEDISChatAgent(ChatAgent):
             return {"messages": [response]}
 
         # Build the graph
-        workflow = StateGraph(ChatAgentState)
+        workflow = StateGraph(MessagesState)
         workflow.add_node("agent", call_model)
 
         if self.tools:
