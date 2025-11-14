@@ -647,72 +647,70 @@ class HEDISChatAgentFactory:
 
 
 # ============================================================================
-# MLflow Model Setup
+# MLflow Model Setup - Module Level (runs on import)
 # ============================================================================
 
-# Create agent instance for MLflow deployment
-if __name__ == "__main__":
-    # Get configuration from environment and model_config
-    endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
-    catalog_name = os.getenv("UC_CATALOG", "main")
-    schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
-    effective_year_str = os.getenv("EFFECTIVE_YEAR")
-    effective_year = int(effective_year_str) if effective_year_str else None
+# Get configuration from environment and model_config
+endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
+catalog_name = os.getenv("UC_CATALOG", "main")
+schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
+effective_year_str = os.getenv("EFFECTIVE_YEAR")
+effective_year = int(effective_year_str) if effective_year_str else None
 
-    # Try to read model_config for deployment configuration
+# Try to read model_config for deployment configuration
+try:
+    model_config = mlflow.models.ModelConfig(development_config="model_config.yaml")
+    enable_persistence = model_config.get("enable_persistence", False)
+    lakebase_instance = model_config.get("lakebase_instance")
+except Exception:
+    # Model config not available, use defaults
+    enable_persistence = False
+    lakebase_instance = None
+
+# Get connection pool if persistence enabled
+# When deployed with DatabricksLakebase resource, use passthrough authentication
+connection_pool = None
+if enable_persistence and lakebase_instance:
     try:
-        model_config = mlflow.models.ModelConfig(development_config="model_config.yaml")
-        enable_persistence = model_config.get("enable_persistence", False)
-        lakebase_instance = model_config.get("lakebase_instance")
-    except Exception:
-        # Model config not available, use defaults
+        from src.database.lakebase import LakebaseDatabase
+        from databricks.sdk import WorkspaceClient
+
+        # Use passthrough authentication - credentials handled automatically
+        w = WorkspaceClient()
+        lakebase_db = LakebaseDatabase()  # Uses default authentication
+
+        lakebase_db.initialize_connection(
+            user=w.current_user.me().user_name,
+            instance_name=lakebase_instance,
+            setup_checkpointer=True
+        )
+
+        # Get connection pool with auto-refresh
+        connection_pool = lakebase_db.get_connection_pool()
+        print(f"Lakebase connection pool initialized via passthrough authentication")
+    except Exception as e:
+        print(f"Warning: Could not connect to Lakebase: {e}")
+        print(f"Agent will run in stateless mode")
         enable_persistence = False
-        lakebase_instance = None
 
-    # Get connection pool if persistence enabled
-    # When deployed with DatabricksLakebase resource, use passthrough authentication
-    connection_pool = None
-    if enable_persistence and lakebase_instance:
-        try:
-            from src.database.lakebase import LakebaseDatabase
-            from databricks.sdk import WorkspaceClient
+# Create agent
+AGENT = HEDISChatAgentFactory.create(
+    endpoint_name=endpoint_name,
+    catalog_name=catalog_name,
+    schema_name=schema_name,
+    connection_pool=connection_pool,
+    enable_persistence=enable_persistence,
+    effective_year=effective_year
+)
 
-            # Use passthrough authentication - credentials handled automatically
-            w = WorkspaceClient()
-            lakebase_db = LakebaseDatabase()  # Uses default authentication
+# Set as MLflow model - this runs on module import
+mlflow.models.set_model(AGENT)
 
-            lakebase_db.initialize_connection(
-                user=w.current_user.me().user_name,
-                instance_name=lakebase_instance,
-                setup_checkpointer=True
-            )
-
-            # Get connection pool with auto-refresh
-            connection_pool = lakebase_db.get_connection_pool()
-            print(f"Lakebase connection pool initialized via passthrough authentication")
-        except Exception as e:
-            print(f"Warning: Could not connect to Lakebase: {e}")
-            print(f"Agent will run in stateless mode")
-            enable_persistence = False
-
-    # Create agent
-    AGENT = HEDISChatAgentFactory.create(
-        endpoint_name=endpoint_name,
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        connection_pool=connection_pool,
-        enable_persistence=enable_persistence,
-        effective_year=effective_year
-    )
-
-    # Set as MLflow model
-    mlflow.models.set_model(AGENT)
-
-    print(f"HEDIS Chat Agent initialized:")
-    print(f"  - Endpoint: {endpoint_name}")
-    print(f"  - Catalog: {catalog_name}")
-    print(f"  - Schema: {schema_name}")
-    print(f"  - Effective Year: {AGENT.effective_year}")
-    print(f"  - Persistence: {enable_persistence}")
-    if enable_persistence and lakebase_instance:
-        print(f"  - Lakebase Instance: {lakebase_instance}")
+print(f"HEDIS Chat Agent initialized:")
+print(f"  - Endpoint: {endpoint_name}")
+print(f"  - Catalog: {catalog_name}")
+print(f"  - Schema: {schema_name}")
+print(f"  - Effective Year: {AGENT.effective_year}")
+print(f"  - Persistence: {enable_persistence}")
+if enable_persistence and lakebase_instance:
+    print(f"  - Lakebase Instance: {lakebase_instance}")

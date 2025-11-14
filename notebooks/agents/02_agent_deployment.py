@@ -290,7 +290,7 @@ os.environ['MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT'] = '600'
 loaded_model = mlflow.pyfunc.load_model(MODEL_URI)
 
 # Run prediction on input_example
-#predictions = loaded_model.predict(input_example)
+predictions = loaded_model.predict(input_example)
 print("✅ Model loaded and tested successfully!")
 print("\nSample prediction:")
 print(predictions['messages'][-1]['content'][:200] + "...")
