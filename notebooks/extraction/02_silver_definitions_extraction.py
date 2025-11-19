@@ -35,17 +35,28 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# Widgets
-dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("volume_name", "hedis", "Volume Name")
-dbutils.widgets.text("model_endpoint", "databricks-claude-opus-4-1", "LLM Model Endpoint")
+import yaml
 
-# Get parameters
+# Load configuration from config.yaml
+try:
+    with open("../config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    # Fallback for different execution contexts
+    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+# Create widgets with config values as defaults
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog Name")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema Name")
+dbutils.widgets.text("volume_name", config.get("volume_name", "hedis"), "Volume Name")
+dbutils.widgets.text("llm_endpoint", config.get("llm_endpoint", "databricks-claude-opus-4-1"), "LLM Model Endpoint")
+
+# Get parameters (widgets override config if changed)
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
-model_endpoint = dbutils.widgets.get("model_endpoint")
+model_endpoint = dbutils.widgets.get("llm_endpoint")
 
 # Table names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"

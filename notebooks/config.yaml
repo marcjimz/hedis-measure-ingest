@@ -1,0 +1,31 @@
+# HEDIS Measure Ingest Configuration
+# This configuration file centralizes all widget values for the notebooks.
+# All notebooks load from this file on startup.
+
+# Unity Catalog Settings
+catalog_name: "main"
+schema_name: "hedis_measurements"
+volume_name: "hedis"
+
+# File Processing
+file_pattern: "HEDIS*.pdf"
+
+# Vector Search Configuration
+vector_search_endpoint: "hedis_vector_endpoint"
+vector_index_name: "hedis_measures_index"
+embedding_model: "databricks-bge-large-en"
+
+# Chunking Configuration
+chunk_size: "1024"
+overlap_percent: "0.15"
+
+# LLM Configuration
+llm_endpoint: "databricks-claude-opus-4-1"
+
+# Persistence Configuration
+enable_persistence: "Yes"
+lakebase_instance: "hedis-agent-pg"
+create_lakebase: "Yes"
+
+# Agent Configuration
+effective_year: ""  # Auto-detected if empty

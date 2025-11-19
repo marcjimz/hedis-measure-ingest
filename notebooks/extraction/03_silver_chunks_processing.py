@@ -33,17 +33,28 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# Widgets
-dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("volume_name", "hedis", "Volume Name")
-dbutils.widgets.text("chunk_size", "1024", "Chunk Size (tokens)")
-dbutils.widgets.text("overlap_percent", "0.15", "Overlap Percent")
-dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("embedding_model", "databricks-bge-large-en", "Embedding Model")
-dbutils.widgets.text("vector_index_name", "hedis_measures_index", "Vector Search Index Name")
+import yaml
 
-# Get parameters
+# Load configuration from config.yaml
+try:
+    with open("../config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    # Fallback for different execution contexts
+    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+# Create widgets with config values as defaults
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog Name")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema Name")
+dbutils.widgets.text("volume_name", config.get("volume_name", "hedis"), "Volume Name")
+dbutils.widgets.text("chunk_size", config.get("chunk_size", "1024"), "Chunk Size (tokens)")
+dbutils.widgets.text("overlap_percent", config.get("overlap_percent", "0.15"), "Overlap Percent")
+dbutils.widgets.text("vector_search_endpoint", config.get("vector_search_endpoint", "hedis_vector_endpoint"), "Vector Search Endpoint")
+dbutils.widgets.text("embedding_model", config.get("embedding_model", "databricks-bge-large-en"), "Embedding Model")
+dbutils.widgets.text("vector_index_name", config.get("vector_index_name", "hedis_measures_index"), "Vector Search Index Name")
+
+# Get parameters (widgets override config if changed)
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")

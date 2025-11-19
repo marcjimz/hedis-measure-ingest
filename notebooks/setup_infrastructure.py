@@ -39,15 +39,26 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# Configuration widgets - only resource names, no flags
-dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("volume_name", "hedis", "Volume Name")
-dbutils.widgets.text("vector_search_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.dropdown("create_lakebase", "Yes", ["Yes", "No"], "Create Lakebase Instance")
-dbutils.widgets.text("lakebase_instance_name", "hedis-agent-pg", "Lakebase Instance Name")
+import yaml
 
-# Get parameters
+# Load configuration from config.yaml
+try:
+    with open("config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    # Fallback for different execution contexts
+    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+# Configuration widgets with config values as defaults
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog Name")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema Name")
+dbutils.widgets.text("volume_name", config.get("volume_name", "hedis"), "Volume Name")
+dbutils.widgets.text("vector_search_endpoint", config.get("vector_search_endpoint", "hedis_vector_endpoint"), "Vector Search Endpoint")
+dbutils.widgets.dropdown("create_lakebase", config.get("create_lakebase", "Yes"), ["Yes", "No"], "Create Lakebase Instance")
+dbutils.widgets.text("lakebase_instance_name", config.get("lakebase_instance", "hedis-agent-pg"), "Lakebase Instance Name")
+
+# Get parameters (widgets override config if changed)
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")

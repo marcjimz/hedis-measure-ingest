@@ -50,25 +50,36 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.append(str(src_path))
 
-# Create configuration widgets
-dbutils.widgets.text("catalog_name", "main", "Catalog")
-dbutils.widgets.text("schema_name", "hedis_measurements", "Schema")
-dbutils.widgets.text("endpoint_name", "databricks-claude-opus-4-1", "Model Serving Endpoint")
-dbutils.widgets.text("effective_year", "", "Effective Year (optional - auto-detected if empty)")
-dbutils.widgets.dropdown("enable_persistence", "Yes", ["Yes", "No"], "Enable Persistence")
-dbutils.widgets.text("lakebase_instance", "hedis-agent-pg", "Lakebase Instance (if persistence enabled)")
-dbutils.widgets.text("vs_index_name", "hedis_measures_index", "Vector Search Index Name")
+import yaml
 
-# Get configuration from widgets
+# Load configuration from config.yaml
+try:
+    with open("../config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    # Fallback for different execution contexts
+    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+# Create configuration widgets with config values as defaults
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema")
+dbutils.widgets.text("llm_endpoint", config.get("llm_endpoint", "databricks-claude-opus-4-1"), "Model Serving Endpoint")
+dbutils.widgets.text("effective_year", config.get("effective_year", ""), "Effective Year (optional - auto-detected if empty)")
+dbutils.widgets.dropdown("enable_persistence", config.get("enable_persistence", "Yes"), ["Yes", "No"], "Enable Persistence")
+dbutils.widgets.text("lakebase_instance", config.get("lakebase_instance", "hedis-agent-pg"), "Lakebase Instance (if persistence enabled)")
+dbutils.widgets.text("vector_index_name", config.get("vector_index_name", "hedis_measures_index"), "Vector Search Index Name")
+
+# Get configuration from widgets (widgets override config if changed)
 CATALOG_NAME = dbutils.widgets.get("catalog_name")
 SCHEMA_NAME = dbutils.widgets.get("schema_name")
-ENDPOINT_NAME = dbutils.widgets.get("endpoint_name")
+ENDPOINT_NAME = dbutils.widgets.get("llm_endpoint")
 EFFECTIVE_YEAR_STR = dbutils.widgets.get("effective_year")
 EFFECTIVE_YEAR = int(EFFECTIVE_YEAR_STR) if EFFECTIVE_YEAR_STR else None
 ENABLE_PERSISTENCE = dbutils.widgets.get("enable_persistence") == "Yes"
 LAKEBASE_INSTANCE = dbutils.widgets.get("lakebase_instance")
 WORKSPACE_URL = dbutils.notebook.entry_point.getDbutils().notebook().getContext().browserHostName().get()
-VS_INDEX_NAME = dbutils.widgets.get("vs_index_name")
+VS_INDEX_NAME = dbutils.widgets.get("vector_index_name")
 
 # Construct full vector search index path from catalog and schema
 VS_INDEX = f"{CATALOG_NAME}.{SCHEMA_NAME}.{VS_INDEX_NAME}"

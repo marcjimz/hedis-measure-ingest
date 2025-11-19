@@ -24,17 +24,29 @@
 
 # COMMAND ----------
 
-# Widgets for configuration
-dbutils.widgets.text("catalog", "main", "Catalog")
-dbutils.widgets.text("schema", "hedis_measurements", "Schema")
-dbutils.widgets.text("vs_endpoint", "hedis_vector_endpoint", "Vector Search Endpoint")
-dbutils.widgets.text("vs_index_name", "hedis_measures_index", "Vector Search Index Name")
-dbutils.widgets.text("llm_endpoint", "databricks-claude-opus-4-1", "LLM Endpoint")
+import yaml
 
-CATALOG = dbutils.widgets.get("catalog")
-SCHEMA = dbutils.widgets.get("schema")
-VS_ENDPOINT = dbutils.widgets.get("vs_endpoint")
-VS_INDEX_NAME = dbutils.widgets.get("vs_index_name")
+# Load configuration from config.yaml
+try:
+    with open("../config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    # Fallback for different execution contexts
+    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+# Create widgets with config values as defaults (normalized names)
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema")
+dbutils.widgets.text("vector_search_endpoint", config.get("vector_search_endpoint", "hedis_vector_endpoint"), "Vector Search Endpoint")
+dbutils.widgets.text("vector_index_name", config.get("vector_index_name", "hedis_measures_index"), "Vector Search Index Name")
+dbutils.widgets.text("llm_endpoint", config.get("llm_endpoint", "databricks-claude-opus-4-1"), "LLM Endpoint")
+
+# Get parameters (widgets override config if changed)
+CATALOG = dbutils.widgets.get("catalog_name")
+SCHEMA = dbutils.widgets.get("schema_name")
+VS_ENDPOINT = dbutils.widgets.get("vector_search_endpoint")
+VS_INDEX_NAME = dbutils.widgets.get("vector_index_name")
 LLM_ENDPOINT = dbutils.widgets.get("llm_endpoint")
 
 # Construct full vector search index path from catalog and schema
