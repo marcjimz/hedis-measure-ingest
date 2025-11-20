@@ -7,7 +7,6 @@
 # MAGIC - Volume for storing HEDIS PDFs
 # MAGIC - Vector Search Endpoint
 # MAGIC - Lakebase PostgreSQL Instance (Optional)
-# MAGIC - Delta Tables (Bronze + Silver)
 # MAGIC
 # MAGIC **Run this notebook FIRST** before executing the pipeline notebooks.
 # MAGIC
@@ -18,9 +17,8 @@
 # MAGIC 3. **Volume**: Managed storage for HEDIS PDFs
 # MAGIC 4. **Vector Search Endpoint**: For semantic search
 # MAGIC 5. **Lakebase PostgreSQL Instance** (Optional): For conversation history persistence
-# MAGIC 6. **Bronze Table**: `hedis_file_metadata`
-# MAGIC 7. **Silver Table 1**: `hedis_measures_definitions`
-# MAGIC 8. **Silver Table 2**: `hedis_measures_chunks`
+# MAGIC
+# MAGIC **Note**: Delta tables are created automatically by the pipeline notebooks when they run.
 
 # COMMAND ----------
 
@@ -517,130 +515,10 @@ if create_lakebase:
 else:
     print("⏭️  Unity Catalog registration skipped (Lakebase not created)")
 
-# # COMMAND ----------
-
-# # MAGIC %md
-# # MAGIC ## Step 5: Create Delta Tables
-# # MAGIC
-# # MAGIC Creates three tables:
-# # MAGIC 1. Bronze: `hedis_file_metadata`
-# # MAGIC 2. Silver 1: `hedis_measures_definitions`
-# # MAGIC 3. Silver 2: `hedis_measures_chunks`
-
-# # COMMAND ----------
-
-# print("🔍 Checking and creating Delta tables...")
-
-# # Get existing tables
-# existing_tables = [t.tableName for t in spark.sql(f"SHOW TABLES IN {catalog_name}.{schema_name}").collect()]
-
-# # Table 1: Bronze - File Metadata
-# table_name = "hedis_file_metadata"
-# print(f"\n1️⃣  Checking bronze table: {table_name}")
-
-# if table_name in existing_tables:
-#     print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
-#     # Enable CDF if not already enabled
-#     try:
-#         spark.sql(f"""
-#             ALTER TABLE {catalog_name}.{schema_name}.{table_name}
-#             SET TBLPROPERTIES (delta.enableChangeDataFeed = true)
-#         """)
-#         print(f"   📝 Change Data Feed enabled for incremental processing")
-#     except Exception as e:
-#         if "already set" not in str(e).lower():
-#             print(f"   ⚠️  Could not enable CDF: {str(e)}")
-# else:
-#     print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
-#     spark.sql(f"""
-#         CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
-#             file_id STRING NOT NULL COMMENT 'Unique file identifier (UUID)',
-#             file_name STRING NOT NULL COMMENT 'Original filename',
-#             file_path STRING NOT NULL COMMENT 'Full volume path',
-#             volume_ingestion_date TIMESTAMP COMMENT 'When uploaded to volume',
-#             published_date STRING COMMENT 'Extracted from filename',
-#             effective_year INT COMMENT 'HEDIS year (e.g., 2025)',
-#             file_size_bytes LONG COMMENT 'File size in bytes',
-#             page_count INT COMMENT 'Total pages in PDF',
-#             ingestion_timestamp TIMESTAMP COMMENT 'Pipeline ingestion time',
-#             last_modified TIMESTAMP COMMENT 'Last update timestamp',
-#             checksum STRING COMMENT 'SHA256 hash for deduplication'
-#         )
-#         USING DELTA
-#         COMMENT 'Bronze layer: HEDIS file metadata catalog'
-#         TBLPROPERTIES (delta.enableChangeDataFeed = true)
-#     """)
-#     print(f"   ✅ Table created: {table_name}")
-#     print(f"   📝 Change Data Feed enabled for incremental processing")
-
-# # Table 2: Silver - Measure Definitions
-# table_name = "hedis_measures_definitions"
-# print(f"\n2️⃣  Checking silver table: {table_name}")
-
-# if table_name in existing_tables:
-#     print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
-# else:
-#     print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
-#     spark.sql(f"""
-#         CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
-#             measure_id STRING NOT NULL COMMENT 'Unique measure identifier',
-#             file_id STRING NOT NULL COMMENT 'Foreign key to bronze table',
-#             specifications STRING NOT NULL COMMENT 'Official measure description from NCQA',
-#             measure STRING NOT NULL COMMENT 'Measure name with standard acronym',
-#             initial_pop STRING COMMENT 'Initial population definition',
-#             denominator ARRAY<STRING> COMMENT 'Denominator components (normalized)',
-#             numerator ARRAY<STRING> COMMENT 'Numerator details (normalized)',
-#             exclusion ARRAY<STRING> COMMENT 'Exclusion conditions (normalized)',
-#             effective_year INT NOT NULL COMMENT 'Measure effective year',
-#             page_start INT COMMENT 'Starting page in source PDF',
-#             page_end INT COMMENT 'Ending page in source PDF',
-#             extraction_timestamp TIMESTAMP COMMENT 'When extracted',
-#             extraction_confidence DOUBLE COMMENT 'LLM confidence score (0.0-1.0)',
-#             source_text STRING COMMENT 'Raw extracted text for auditing'
-#         )
-#         USING DELTA
-#         COMMENT 'Silver layer: Structured HEDIS measure definitions'
-#         PARTITIONED BY (effective_year)
-#     """)
-#     print(f"   ✅ Table created: {table_name}")
-
-# # Table 3: Silver - Chunks for Vector Search
-# table_name = "hedis_measures_chunks"
-# print(f"\n3️⃣  Checking silver table: {table_name}")
-
-# if table_name in existing_tables:
-#     print(f"   ✅ Table already exists: {catalog_name}.{schema_name}.{table_name}")
-# else:
-#     print(f"   🏗️  Creating table: {catalog_name}.{schema_name}.{table_name}")
-#     spark.sql(f"""
-#         CREATE TABLE {catalog_name}.{schema_name}.{table_name} (
-#             chunk_id STRING NOT NULL COMMENT 'Unique chunk identifier',
-#             file_id STRING NOT NULL COMMENT 'Foreign key to bronze table',
-#             measure_name STRING COMMENT 'Associated measure name if available',
-#             chunk_text STRING NOT NULL COMMENT 'Chunk content with markdown headers',
-#             chunk_sequence INT NOT NULL COMMENT 'Sequence order within file',
-#             token_count INT COMMENT 'Approximate token count',
-#             page_start INT COMMENT 'Starting page number',
-#             page_end INT COMMENT 'Ending page number',
-#             headers ARRAY<STRING> COMMENT 'Header hierarchy (H1 > H2 > H3)',
-#             char_start LONG COMMENT 'Character offset start',
-#             char_end LONG COMMENT 'Character offset end',
-#             effective_year INT COMMENT 'HEDIS year',
-#             chunk_timestamp TIMESTAMP COMMENT 'Processing timestamp',
-#             metadata STRING COMMENT 'JSON metadata for vector search'
-#         )
-#         USING DELTA
-#         COMMENT 'Silver layer: Text chunks for vector search'
-#         PARTITIONED BY (effective_year)
-#     """)
-#     print(f"   ✅ Table created: {table_name}")
-
-# print("\n✅ All Delta tables verified/created successfully")
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 6: Verify Infrastructure
+# MAGIC ## Step 5: Verify Infrastructure
 
 # COMMAND ----------
 
@@ -700,22 +578,11 @@ if create_lakebase:
 else:
     print(f"⏭️  Lakebase instance creation was skipped")
 
-# # Check tables
-# tables_to_check = [
-#     "hedis_file_metadata",
-#     "hedis_measures_definitions",
-#     "hedis_measures_chunks"
-# ]
-
-# for table_name in tables_to_check:
-#     try:
-#         spark.table(f"{catalog_name}.{schema_name}.{table_name}")
-#         print(f"✅ Table exists: {catalog_name}.{schema_name}.{table_name}")
-#     except Exception as e:
-#         print(f"❌ Table not found: {catalog_name}.{schema_name}.{table_name}")
-
-# print("=" * 60)
+print("=" * 60)
+print("\n✅ Infrastructure setup complete!")
+print("\nNext steps:")
+print("1. Upload HEDIS PDF files to the volume")
+print("2. Run the E2E pipeline job to process files and deploy the agent")
 
 # COMMAND ----------
-
 
