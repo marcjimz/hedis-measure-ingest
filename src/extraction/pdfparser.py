@@ -3,10 +3,15 @@ PDF Parser module for extracting structured text from PDF documents.
 
 Based on patterns from dbx-hls-vector-search example - uses PyMuPDF (fitz)
 with get_text("words") for better text extraction with position preservation.
+
+Uses Databricks SDK WorkspaceClient to download files from Unity Catalog Volumes.
 """
 
 import fitz  # PyMuPDF
+import base64
 from typing import List, Dict, Any, Tuple, Optional
+
+from databricks.sdk import WorkspaceClient
 
 
 class PDFParser:
@@ -18,10 +23,12 @@ class PDFParser:
     - page_footer: Text in the bottom portion of the page
     - text: Body text content
 
+    Uses Databricks SDK to download files from Unity Catalog Volumes.
+
     Usage:
         parser = PDFParser()
         elements = parser.document_parser(
-            file_path="/path/to/document.pdf",
+            file_path="/Volumes/catalog/schema/volume/document.pdf",
             file_id="unique-id",
             file_name="document.pdf",
             effective_year=2025
@@ -32,7 +39,8 @@ class PDFParser:
         self,
         header_threshold_pct: float = 0.08,
         footer_threshold_pct: float = 0.92,
-        line_grouping_threshold: float = 5.0
+        line_grouping_threshold: float = 5.0,
+        workspace_client: Optional[WorkspaceClient] = None
     ):
         """
         Initialize the PDF parser.
@@ -41,10 +49,48 @@ class PDFParser:
             header_threshold_pct: Percentage of page height for header zone (default 8%)
             footer_threshold_pct: Percentage of page height where footer starts (default 92%)
             line_grouping_threshold: Pixel threshold for grouping words into lines
+            workspace_client: Optional WorkspaceClient instance (creates new one if not provided)
         """
         self.header_threshold_pct = header_threshold_pct
         self.footer_threshold_pct = footer_threshold_pct
         self.line_grouping_threshold = line_grouping_threshold
+        self._workspace_client = workspace_client
+
+    @property
+    def workspace_client(self) -> WorkspaceClient:
+        """Lazy initialization of WorkspaceClient."""
+        if self._workspace_client is None:
+            self._workspace_client = WorkspaceClient()
+        return self._workspace_client
+
+    def _download_file_from_volume(self, file_path: str, verbose: bool = True) -> bytes:
+        """
+        Download a file from Databricks Unity Catalog Volume.
+
+        Args:
+            file_path: Path to the file (e.g., /Volumes/catalog/schema/volume/file.pdf)
+            verbose: Whether to print progress messages
+
+        Returns:
+            File content as bytes
+        """
+        if verbose:
+            print(f"  📥 Downloading from volume: {file_path}")
+
+        response = self.workspace_client.files.download(file_path=file_path)
+        pdf_bytes_encoded = response.contents.read()
+
+        # The SDK returns base64-encoded content
+        try:
+            pdf_bytes = base64.b64decode(pdf_bytes_encoded)
+        except Exception:
+            # If it's not base64 encoded, use as-is
+            pdf_bytes = pdf_bytes_encoded
+
+        if verbose:
+            print(f"  📦 Downloaded {len(pdf_bytes):,} bytes")
+
+        return pdf_bytes
 
     def document_parser(
         self,
@@ -76,13 +122,14 @@ class PDFParser:
         """
         elements = []
 
-        # For Databricks volumes, we need to use the /dbfs prefix
-        local_path = file_path
-        if file_path.startswith("/Volumes/"):
-            local_path = "/dbfs" + file_path
-
         try:
-            doc = fitz.open(local_path)
+            # For Databricks volumes, use the SDK to download the file
+            if file_path.startswith("/Volumes/"):
+                pdf_bytes = self._download_file_from_volume(file_path, verbose)
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            else:
+                # Local file path
+                doc = fitz.open(file_path)
             n_pages = len(doc)
 
             if max_pages:
@@ -262,12 +309,12 @@ class PDFParser:
             - char_count: Character count
             - word_count: Word count
         """
-        # For Databricks volumes
-        local_path = file_path
+        # For Databricks volumes, use the SDK to download the file
         if file_path.startswith("/Volumes/"):
-            local_path = "/dbfs" + file_path
-
-        doc = fitz.open(local_path)
+            pdf_bytes = self._download_file_from_volume(file_path, verbose=False)
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        else:
+            doc = fitz.open(file_path)
         n_pages = min(len(doc), max_pages) if max_pages else len(doc)
 
         pages_data = []
