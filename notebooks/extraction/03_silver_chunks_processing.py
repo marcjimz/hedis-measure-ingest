@@ -2,18 +2,18 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Chunks Processing
 # MAGIC
-# MAGIC This notebook chunks HEDIS documents for vector search using `ai_parse_document` for structure-aware chunking.
+# MAGIC This notebook chunks HEDIS documents for vector search using PyMuPDF for structure-aware chunking.
 # MAGIC
 # MAGIC **Module**: Silver Chunks for Search (Step 3 of 3)
 # MAGIC
 # MAGIC **Inputs**:
-# MAGIC - Bronze table: `{catalog}.{schema}.hedis_file_metadata` (status='completed')
+# MAGIC - Silver table: `{catalog}.{schema}.hedis_definitions` (from notebook 02)
 # MAGIC
 # MAGIC **Outputs**:
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_chunks`
 # MAGIC
 # MAGIC **Features**:
-# MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
+# MAGIC - Uses pre-parsed elements from hedis_definitions table
 # MAGIC - Header-aware chunking with configurable overlap
 # MAGIC - Page headers and footers preserved in each chunk
 # MAGIC - Ready for vector search delta sync
@@ -65,15 +65,14 @@ embedding_model = dbutils.widgets.get("embedding_model")
 vector_index_name = dbutils.widgets.get("vector_index_name")
 
 # Table and index names
-bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
-silver_table = f"{catalog_name}.{schema_name}.hedis_measures_chunks"
+silver_definitions_table = f"{catalog_name}.{schema_name}.hedis_definitions"
+silver_chunks_table = f"{catalog_name}.{schema_name}.hedis_measures_chunks"
 volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-IMAGE_OUTPUT_PATH = f"{volume_path}/images"
 index_name = f"{catalog_name}.{schema_name}.{vector_index_name}"
 
 print(f"📋 Configuration:")
-print(f"   Bronze Table: {bronze_table}")
-print(f"   Silver Table: {silver_table}")
+print(f"   Source Table: {silver_definitions_table}")
+print(f"   Chunks Table: {silver_chunks_table}")
 print(f"   Volume Path: {volume_path}")
 print(f"   Chunk Size: {chunk_size} tokens")
 print(f"   Overlap: {overlap_percent * 100}%")
@@ -103,18 +102,16 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## AI-Powered Chunking with `ai_parse_document`
+# MAGIC ## Structure-Aware Chunking from Definitions
 # MAGIC
-# MAGIC Chunking leverages `ai_parse_document` to preserve document structure. The function identifies headers and sections,
-# MAGIC which enables semantic chunking that respects HEDIS measure boundaries.
+# MAGIC This notebook reads pre-parsed elements from the `hedis_definitions` table (populated by notebook 02 using PyMuPDF).
+# MAGIC The parsed elements include position-based classification for headers, footers, and body text.
 # MAGIC
 # MAGIC **How it helps chunking:**
-# MAGIC - Element classification preserves header hierarchy (H1 > H2 > H3)
-# MAGIC - Bounding boxes help identify page breaks and column layouts
-# MAGIC - Table detection ensures code value sets aren't split across chunks
-# MAGIC - Page headers and footers provide measure context for each chunk
-# MAGIC
-# MAGIC This notebook uses SQL-based processing similar to notebook 2 for consistency and performance.
+# MAGIC - Page headers and footers are separated from body content
+# MAGIC - Element classification enables semantic chunking
+# MAGIC - Page numbers preserved for chunk context
+# MAGIC - Ready for overlapping chunk generation
 
 # COMMAND ----------
 
@@ -124,9 +121,9 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # Drop existing table if schema doesn't match (for development)
-if spark.catalog.tableExists(silver_table):
+if spark.catalog.tableExists(silver_chunks_table):
     try:
-        existing_schema = spark.table(silver_table).schema
+        existing_schema = spark.table(silver_chunks_table).schema
         expected_fields = {'chunk_id', 'file_id', 'measure_name', 'header', 'footer', 'page_content', 'chunk_content',
                           'chunk_sequence', 'token_count', 'page_start', 'page_end', 'effective_year', 'chunk_timestamp', 'metadata'}
         actual_fields = {field.name for field in existing_schema.fields}
@@ -135,7 +132,7 @@ if spark.catalog.tableExists(silver_table):
             print(f"⚠️  Schema mismatch detected. Dropping and recreating table...")
             print(f"   Expected: {sorted(expected_fields)}")
             print(f"   Actual: {sorted(actual_fields)}")
-            spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
+            spark.sql(f"DROP TABLE IF EXISTS {silver_chunks_table}")
             print(f"   ✅ Dropped old table")
     except Exception as e:
         print(f"   Error checking schema: {str(e)}")
@@ -144,7 +141,7 @@ else:
 
 # Create table with correct schema and CDF enabled
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS {silver_table} (
+    CREATE TABLE IF NOT EXISTS {silver_chunks_table} (
         chunk_id STRING NOT NULL,
         file_id STRING NOT NULL,
         measure_name STRING,
@@ -168,24 +165,26 @@ spark.sql(f"""
     )
 """)
 
-print(f"✅ Silver chunks table created/verified with CDF enabled: {silver_table}")
+print(f"✅ Silver chunks table created/verified with CDF enabled: {silver_chunks_table}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Select Files to Process
+# MAGIC
+# MAGIC Find files in definitions table that haven't been chunked yet.
 
 # COMMAND ----------
 
 files_to_process = spark.sql(f"""
-    SELECT b.file_id, b.file_path, b.file_name, b.effective_year
-    FROM {bronze_table} b
+    SELECT DISTINCT d.file_id, d.file_name, d.effective_year
+    FROM {silver_definitions_table} d
     LEFT JOIN (
         SELECT DISTINCT file_id
-        FROM {silver_table}
-    ) s ON b.file_id = s.file_id
-    WHERE s.file_id IS NULL
-    ORDER BY b.ingestion_timestamp DESC
+        FROM {silver_chunks_table}
+    ) c ON d.file_id = c.file_id
+    WHERE c.file_id IS NULL
+    ORDER BY d.file_name
 """)
 
 file_count = files_to_process.count()
@@ -197,135 +196,43 @@ if file_count > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Parse Documents with AI
+# MAGIC ## Load Elements from Definitions Table
 # MAGIC
-# MAGIC Using `ai_parse_document` SQL function to extract structured elements from PDFs.
-# MAGIC This step uses the same proven approach from notebook 02.
+# MAGIC Read pre-parsed elements from the `hedis_definitions` table (populated by notebook 02 using PyMuPDF).
 
 # COMMAND ----------
 
 if file_count > 0:
-    print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
+    # Get list of file IDs to process
+    file_ids = [row.file_id for row in files_to_process.collect()]
+    file_ids_str = "', '".join(file_ids)
 
-    # Collect file list (small operation)
-    files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
+    print(f"📖 Loading elements for {len(file_ids)} file(s) from definitions table...")
 
-    # Parse all documents - keep as DataFrames to preserve VARIANT type
-    parsed_dfs = []
-
-    from tqdm import tqdm
-    for file_row in tqdm(files_list, desc="Parsing documents"):
-        try:
-            print(f"\n📄 Parsing: {file_row.file_name}")
-
-            # Don't collect! Keep as DataFrame to preserve VARIANT type
-            parsed_df = spark.sql(f"""
-                SELECT
-                    '{file_row.file_id}' AS file_id,
-                    '{file_row.file_name}' AS file_name,
-                    CAST({file_row.effective_year} AS INT) AS effective_year,
-                    ai_parse_document(
-                        content,
-                        map(
-                            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-                            'descriptionElementTypes', '*'
-                        )
-                    ) AS parsed
-                FROM READ_FILES(
-                    '{file_row.file_path}',
-                    format => 'binaryFile'
-                )
-            """)
-            
-            parsed_dfs.append(parsed_df)
-            print(f"   ✅ Parsed successfully")
-
-        except Exception as e:
-            print(f"   ❌ Failed to parse: {str(e)}")
-            raise
-
-    print(f"\n📊 Successfully parsed {len(parsed_dfs)} document(s)")
-
-    # Union all DataFrames to preserve VARIANT type (don't use createDataFrame!)
-    if parsed_dfs:
-        from functools import reduce
-        parsed_docs_df = reduce(lambda a, b: a.union(b), parsed_dfs)
-
-        # Register as temp view for SQL access
-        parsed_docs_df.createOrReplaceTempView("parsed_documents")
-        
-        # Set all_parsed_docs for downstream checks (just need length)
-        all_parsed_docs = parsed_dfs  # For the len() check later
-
-        print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
-        print(f"   Available columns: file_id, file_name, effective_year, parsed")
-
-        # Display summary
-        display(parsed_docs_df.select("file_id", "file_name", "effective_year"))
-    else:
-        all_parsed_docs = []
-        print("⚠️  No documents successfully parsed")
-else:
-    all_parsed_docs = []
-    print("⚠️  No files to process")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Extract Elements with Page Numbers
-# MAGIC
-# MAGIC Extract all elements from parsed documents with proper page numbering and metadata flags.
-# MAGIC This uses the SAME LOGIC as notebook 02.
-
-# COMMAND ----------
-
-if file_count > 0 and len(all_parsed_docs) > 0:
-    print("🔍 Extracting elements with page numbers...")
-
-    elements_df = spark.sql("""
-        WITH elements AS (
-            SELECT
-                file_id,
-                file_name,
-                effective_year,
-                el,
-                try_cast(el:type AS STRING) AS element_type,
-                try_cast(el:content AS STRING) AS element_content,
-                /* Prefer top-level page_id if present, else fallback to bbox page_id */
-                coalesce(
-                    try_cast(el:page_id AS INT),
-                    try_cast(el:bbox[0]:page_id AS INT)
-                ) AS page_index_0_based
-            FROM parsed_documents
-            LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
-            WHERE try_cast(el:content AS STRING) IS NOT NULL
-        )
+    # Read elements directly from definitions table
+    elements_df = spark.sql(f"""
         SELECT
             file_id,
             file_name,
             effective_year,
             element_type,
             element_content,
-            page_index_0_based + 1 AS page_number,
-            -- Flag for page headers and footers for special handling
-            CASE
-                WHEN element_type IN ('page_header', 'page_footer') THEN true
-                ELSE false
-            END AS is_page_metadata
-        FROM elements
+            page_number,
+            is_page_metadata
+        FROM {silver_definitions_table}
+        WHERE file_id IN ('{file_ids_str}')
     """)
 
-    # Register as temp view
-    elements_df.createOrReplaceTempView("elements")
     element_count = elements_df.count()
+    elements_df.createOrReplaceTempView("elements")
 
-    print(f"✅ Created 'elements' temp view with {element_count:,} elements")
-    print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number, is_page_metadata")
+    print(f"✅ Loaded {element_count:,} elements from definitions table")
 
     # Display element summary
     display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
 else:
-    print("⚠️  No documents to extract elements from")
+    element_count = 0
+    print("⚠️  No files to process")
 
 # COMMAND ----------
 
@@ -534,21 +441,21 @@ if chunk_count > 0:
     if file_ids_processed:
         file_ids_str = "', '".join(file_ids_processed)
         delete_count = spark.sql(f"""
-            DELETE FROM {silver_table}
+            DELETE FROM {silver_chunks_table}
             WHERE file_id IN ('{file_ids_str}')
         """)
         print(f"   🗑️  Removed existing chunks for {len(file_ids_processed)} files")
 
     # INSERT new chunks
-    final_chunks_df.write.mode("append").saveAsTable(silver_table)
+    final_chunks_df.write.mode("append").saveAsTable(silver_chunks_table)
 
-    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_table}").first()["cnt"]
+    result_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {silver_chunks_table}").first()["cnt"]
     print(f"✅ Wrote {chunk_count:,} chunks to silver table (DELETE+INSERT)")
     print(f"   Total chunks in table: {result_count:,}")
 
     # Display sample
     print(f"\n📋 Sample chunks from table:")
-    display(spark.table(silver_table).orderBy(F.desc("chunk_timestamp")).limit(10))
+    display(spark.table(silver_chunks_table).orderBy(F.desc("chunk_timestamp")).limit(10))
 else:
     print("⚠️  No chunks generated - skipping write")
 
@@ -566,14 +473,9 @@ vsc = VectorSearchClient()
 
 print(f"🔍 Vector Search Configuration:")
 print(f"   Endpoint: {vector_endpoint_name}")
-print(f"   Source Table: {silver_table}")
+print(f"   Source Table: {silver_chunks_table}")
 print(f"   Index: {index_name}")
 print(f"   Embedding Model: {embedding_model}")
-
-# COMMAND ----------
-
-import time
-time.sleep(60*30)
 
 # COMMAND ----------
 
@@ -592,7 +494,7 @@ except Exception:
 
     index = vsc.create_delta_sync_index(
         endpoint_name=vector_endpoint_name,
-        source_table_name=silver_table,
+        source_table_name=silver_chunks_table,
         index_name=index_name,
         pipeline_type="TRIGGERED",
         primary_key="chunk_id",
@@ -625,7 +527,7 @@ else:
 
 print(f"\n✅ Vector search index synced!")
 print(f"   Index: {index_name}")
-print(f"   Source: {silver_table}")
+print(f"   Source: {silver_chunks_table}")
 print(f"   Embedding column: chunk_content")
 
 # COMMAND ----------
