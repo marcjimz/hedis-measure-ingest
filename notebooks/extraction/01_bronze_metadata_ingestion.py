@@ -36,7 +36,8 @@ import yaml
 import os
 
 # Load configuration from config.yaml
-config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml")
+config_path = os.path.join(os.path.dirname(os.getcwd()), "config.yaml")
+
 # For Databricks notebook context, use relative path
 try:
     with open("../config.yaml", "r") as f:

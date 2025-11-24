@@ -210,15 +210,16 @@ if file_count > 0:
     # Collect file list (small operation)
     files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
 
-    # Parse all documents
-    all_parsed_docs = []
+    # Parse all documents - keep as DataFrames to preserve VARIANT type
+    parsed_dfs = []
 
     from tqdm import tqdm
     for file_row in tqdm(files_list, desc="Parsing documents"):
         try:
             print(f"\n📄 Parsing: {file_row.file_name}")
 
-            parsed_result = spark.sql(f"""
+            # Don't collect! Keep as DataFrame to preserve VARIANT type
+            parsed_df = spark.sql(f"""
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
@@ -234,32 +235,27 @@ if file_count > 0:
                     '{file_row.file_path}',
                     format => 'binaryFile'
                 )
-            """).collect()
-
-            # Process ALL results from the parse (defensive - typically 1 per file)
-            if parsed_result:
-                for result in parsed_result:
-                    all_parsed_docs.append({
-                        'file_id': result.file_id,
-                        'file_name': result.file_name,
-                        'effective_year': result.effective_year,
-                        'parsed': result.parsed
-                    })
-                print(f"   ✅ Parsed successfully ({len(parsed_result)} result(s))")
+            """)
+            
+            parsed_dfs.append(parsed_df)
+            print(f"   ✅ Parsed successfully")
 
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
             raise
 
-    print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
+    print(f"\n📊 Successfully parsed {len(parsed_dfs)} document(s)")
 
-    # Create DataFrame from parsed documents - SAME AS NOTEBOOK 02
-    if all_parsed_docs:
-        # Create DataFrame with parsed content
-        parsed_docs_df = spark.createDataFrame(all_parsed_docs)
+    # Union all DataFrames to preserve VARIANT type (don't use createDataFrame!)
+    if parsed_dfs:
+        from functools import reduce
+        parsed_docs_df = reduce(lambda a, b: a.union(b), parsed_dfs)
 
         # Register as temp view for SQL access
         parsed_docs_df.createOrReplaceTempView("parsed_documents")
+        
+        # Set all_parsed_docs for downstream checks (just need length)
+        all_parsed_docs = parsed_dfs  # For the len() check later
 
         print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
         print(f"   Available columns: file_id, file_name, effective_year, parsed")
@@ -267,8 +263,10 @@ if file_count > 0:
         # Display summary
         display(parsed_docs_df.select("file_id", "file_name", "effective_year"))
     else:
+        all_parsed_docs = []
         print("⚠️  No documents successfully parsed")
 else:
+    all_parsed_docs = []
     print("⚠️  No files to process")
 
 # COMMAND ----------
@@ -571,6 +569,11 @@ print(f"   Endpoint: {vector_endpoint_name}")
 print(f"   Source Table: {silver_table}")
 print(f"   Index: {index_name}")
 print(f"   Embedding Model: {embedding_model}")
+
+# COMMAND ----------
+
+import time
+time.sleep(60*30)
 
 # COMMAND ----------
 

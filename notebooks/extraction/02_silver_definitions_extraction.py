@@ -139,44 +139,44 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # DBTITLE 1,Document Extraction - This cell may take some time
-import os
+# import os
 
-# Get a sample file path from bronze table; this does one, in future we will scale this to many files.
-sample_file = spark.sql(f"""
-    SELECT file_path, file_name
-    FROM {bronze_table}
-    LIMIT 1
-""").collect()
+# # Get a sample file path from bronze table; this does one, in future we will scale this to many files.
+# sample_file = spark.sql(f"""
+#     SELECT file_path, file_name
+#     FROM {bronze_table}
+#     LIMIT 1
+# """).collect()
 
-if sample_file:
-    sample_path = sample_file[0].file_path
-    directory = os.path.dirname(sample_path)
-    sample_name = sample_file[0].file_name
+# if sample_file:
+#     sample_path = sample_file[0].file_path
+#     directory = os.path.dirname(sample_path)
+#     sample_name = sample_file[0].file_name
 
-    print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
-    print(f"   Path: {sample_path}")
+#     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
+#     print(f"   Path: {sample_path}")
 
-    sql = f'''
-        with parsed_documents AS (
-        SELECT
-            path,
-            ai_parse_document(content
-            ,
-            map(
-            'version', '2.0',
-            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-            'descriptionElementTypes', '*'
-            )
-        ) as parsed
-        FROM
-            read_files('{sample_path}', format => 'binaryFile')
-        )
-        select * from parsed_documents
-        '''
+#     sql = f'''
+#         with parsed_documents AS (
+#         SELECT
+#             path,
+#             ai_parse_document(content
+#             ,
+#             map(
+#             'version', '2.0',
+#             'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
+#             'descriptionElementTypes', '*'
+#             )
+#         ) as parsed
+#         FROM
+#             read_files('{sample_path}', format => 'binaryFile')
+#         )
+#         select * from parsed_documents
+#         '''
 
-    parsed_results = [row.parsed for row in spark.sql(sql).collect()]
-else:
-    print("⚠️  No files in bronze table yet - run bronze ingestion first")
+#     parsed_results = [row.parsed for row in spark.sql(sql).collect()]
+# else:
+#     print("⚠️  No files in bronze table yet - run bronze ingestion first")
 
 # COMMAND ----------
 
@@ -191,10 +191,10 @@ else:
 
 # COMMAND ----------
 
-from src.sql.functions.document_renderer import render_ai_parse_output_interactive
+# from src.sql.functions.document_renderer import render_ai_parse_output_interactive
 
-# Launch interactive viewer with page navigation
-render_ai_parse_output_interactive(parsed_results)
+# # Launch interactive viewer with page navigation
+# render_ai_parse_output_interactive(parsed_results)
 
 # COMMAND ----------
 
@@ -260,7 +260,7 @@ files_to_process = spark.sql(f"""
         SELECT DISTINCT file_id
         FROM {silver_table}
     ) s ON b.file_id = s.file_id
-    WHERE s.file_id IS NULL
+    -- WHERE s.file_id IS NULL
     ORDER BY b.ingestion_timestamp DESC
 """)
 
@@ -285,16 +285,16 @@ if file_count > 0:
     # Collect file list (small operation)
     files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
     
-    # Parse all documents
-    all_parsed_docs = []
+    # Parse all documents - keep as DataFrames to preserve VARIANT type
+    parsed_dfs = []
     
     from tqdm import tqdm
     for file_row in tqdm(files_list, desc="Parsing documents"):
         try:
             print(f"\n📄 Parsing: {file_row.file_name}")
             
-            # Parse the document
-            parsed_result = spark.sql(f"""
+            # Don't collect! Keep as DataFrame to preserve VARIANT type
+            parsed_df = spark.sql(f"""
                 SELECT
                     '{file_row.file_id}' AS file_id,
                     '{file_row.file_name}' AS file_name,
@@ -310,31 +310,24 @@ if file_count > 0:
                     '{file_row.file_path}',
                     format => 'binaryFile'
                 )
-            """).collect()
-
-            # Process ALL results from the parse (defensive - typically 1 per file)
-            if parsed_result:
-                for result in parsed_result:
-                    all_parsed_docs.append({
-                        'file_id': result.file_id,
-                        'file_name': result.file_name,
-                        'effective_year': result.effective_year,
-                        'parsed': result.parsed
-                    })
-                print(f"   ✅ Parsed successfully ({len(parsed_result)} result(s))")
+            """)
+            
+            parsed_dfs.append(parsed_df)
+            print(f"   ✅ Parsed successfully")
             
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
             raise e
     
-    print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
+    print(f"\n📊 Successfully parsed {len(parsed_dfs)} document(s)")
     
-    # Create DataFrame from parsed documents
-    if all_parsed_docs:
+    # Union all DataFrames to preserve VARIANT type
+    if parsed_dfs:
+        from functools import reduce
         from pyspark.sql.functions import expr
         
-        # Create DataFrame with parsed content
-        parsed_docs_df = spark.createDataFrame(all_parsed_docs)
+        # Union all parsed DataFrames (preserves VARIANT type)
+        parsed_docs_df = reduce(lambda a, b: a.union(b), parsed_dfs)
         
         # Extract full text and error status
         parsed_docs_df = parsed_docs_df.withColumn(

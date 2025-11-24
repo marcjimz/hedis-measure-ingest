@@ -3,7 +3,7 @@
 # All notebooks load from this file on startup.
 
 # Unity Catalog Settings
-catalog_name: "main"
+catalog_name: "marcin_demo2"
 schema_name: "hedis_measurements"
 volume_name: "hedis"
 
@@ -28,4 +28,4 @@ lakebase_instance: "hedis-agent-pg"
 create_lakebase: "Yes"
 
 # Agent Configuration
-effective_year: ""  # Auto-detected if empty
+effective_year: "2025"  # Auto-detected if empty
