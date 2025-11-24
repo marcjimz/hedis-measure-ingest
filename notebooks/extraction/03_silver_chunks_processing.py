@@ -183,7 +183,7 @@ files_to_process = spark.sql(f"""
         SELECT DISTINCT file_id
         FROM {silver_chunks_table}
     ) c ON b.file_id = c.file_id
-    WHERE c.file_id IS NULL
+    -- WHERE c.file_id IS NULL
     ORDER BY b.ingestion_timestamp DESC
 """)
 
