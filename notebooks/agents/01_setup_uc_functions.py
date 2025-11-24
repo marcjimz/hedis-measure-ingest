@@ -261,12 +261,6 @@ display(expansions)
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC select *
-# MAGIC from marcin_demo.hedis_measurements.measures_document_search('diabtes', 5, 2025)
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC # Search with AI-powered query expansion
 # MAGIC
@@ -389,7 +383,3 @@ display(combined_results)
 # MAGIC ```sql
 # MAGIC SELECT * FROM measures_search_expansion('diabetes', 3)
 # MAGIC ```
-
-# COMMAND ----------
-
-
