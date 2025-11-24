@@ -66,7 +66,7 @@ dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalo
 dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema")
 dbutils.widgets.text("llm_endpoint", config.get("llm_endpoint", "databricks-claude-opus-4-1"), "Model Serving Endpoint")
 dbutils.widgets.text("effective_year", config.get("effective_year", ""), "Effective Year (optional - auto-detected if empty)")
-dbutils.widgets.dropdown("enable_persistence", config.get("enable_persistence", "Yes"), ["Yes", "No"], "Enable Persistence")
+dbutils.widgets.dropdown("enable_persistence", config.get("enable_persistence", "No"), ["Yes", "No"], "Enable Persistence")
 dbutils.widgets.text("lakebase_instance", config.get("lakebase_instance", "hedis-agent-pg"), "Lakebase Instance (if persistence enabled)")
 dbutils.widgets.text("vector_index_name", config.get("vector_index_name", "hedis_measures_index"), "Vector Search Index Name")
 
@@ -451,3 +451,4 @@ try:
     print(response.messages[-1]['content'])
 except Exception as e:
     print(f"❌ Error testing endpoint: {e}")
+    raise e

@@ -23,9 +23,9 @@ overlap_percent: "0.15"
 llm_endpoint: "databricks-claude-opus-4-1"
 
 # Persistence Configuration
-enable_persistence: "Yes"
+enable_persistence: "No"
 lakebase_instance: "hedis-agent-pg"
-create_lakebase: "Yes"
+create_lakebase: "No"
 
 # Agent Configuration
 effective_year: "2025"  # Auto-detected if empty
