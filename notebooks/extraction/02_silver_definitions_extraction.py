@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Definitions Extraction
 # MAGIC
-# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using Databricks `ai_parse_document` and `ai_query` SQL functions.
+# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using PyMuPDF and `ai_query` SQL functions.
 # MAGIC
 # MAGIC **Module**: Silver Definitions (Step 2 of 3)
 # MAGIC
@@ -13,7 +13,7 @@
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_definitions`
 # MAGIC
 # MAGIC **Features**:
-# MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
+# MAGIC - PDF parsing with PyMuPDF (fitz) for text extraction
 # MAGIC - Table of Contents parsing for measure boundaries
 # MAGIC - SQL-based structured extraction with `ai_query`
 # MAGIC - Idempotent writes with MERGE
@@ -102,99 +102,198 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## AI-Powered PDF Parsing with `ai_parse_document`
+# MAGIC ## PDF Parsing with PyMuPDF
 # MAGIC
-# MAGIC This pipeline uses Databricks' native `ai_parse_document` SQL function (Runtime 17.1+) for PDF text extraction.
-# MAGIC The function returns structured JSON with classified elements (text, table, header, figure) and handles complex layouts.
+# MAGIC This pipeline uses PyMuPDF (fitz) for PDF text extraction. The library extracts text blocks with positional
+# MAGIC information, allowing classification of elements as headers, footers, or body text based on their position on the page.
 # MAGIC
-# MAGIC **Basic SQL usage:**
-# MAGIC ```sql
-# MAGIC WITH parsed_documents AS (
-# MAGIC   SELECT
-# MAGIC     path,
-# MAGIC     ai_parse_document(
-# MAGIC       content,
-# MAGIC       map(
-# MAGIC         'imageOutputPath', '/Volumes/catalog/schema/volume/parsed_images/',
-# MAGIC         'descriptionElementTypes', '*'
-# MAGIC       )
-# MAGIC     ) AS parsed
-# MAGIC   FROM READ_FILES('/Volumes/catalog/schema/volume/*.pdf', format => 'binaryFile')
-# MAGIC )
-# MAGIC SELECT * FROM parsed_documents WHERE try_cast(parsed:error_status AS STRING) IS NULL;
-# MAGIC ```
+# MAGIC **Element Classification:**
+# MAGIC - **page_header**: Text in the top 8% of the page
+# MAGIC - **page_footer**: Text in the bottom 8% of the page
+# MAGIC - **text**: Body text content
 # MAGIC
-# MAGIC The demo below shows the function in action with a sample HEDIS file.
+# MAGIC The output structure matches the ai_parse_document format for compatibility with downstream processing.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Demo: Extract Structure from Sample PDF
+# MAGIC ### PyMuPDF Document Parser Function
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC **NOTE**: if using serverless, make sure you are environment version `4 - Python 3.12, Scala 2.13`
+import fitz  # PyMuPDF
+from typing import List, Dict, Any, Tuple
 
-# COMMAND ----------
+def parse_pdf_with_pymupdf(file_path: str, file_id: str, file_name: str, effective_year: int) -> List[Dict[str, Any]]:
+    """
+    Parse a PDF file using PyMuPDF and extract elements with positional classification.
 
-# DBTITLE 1,Document Extraction - This cell may take some time
-# import os
+    Based on patterns from dbx-hls-vector-search example - uses get_text("words") for
+    better text extraction with position preservation.
 
-# # Get a sample file path from bronze table; this does one, in future we will scale this to many files.
-# sample_file = spark.sql(f"""
-#     SELECT file_path, file_name
-#     FROM {bronze_table}
-#     LIMIT 1
-# """).collect()
+    Returns a list of element dictionaries with:
+    - file_id, file_name, effective_year
+    - element_type: 'page_header', 'page_footer', or 'text'
+    - element_content: the text content
+    - page_number: 1-based page number
+    - is_page_metadata: True for headers/footers
+    """
+    elements = []
 
-# if sample_file:
-#     sample_path = sample_file[0].file_path
-#     directory = os.path.dirname(sample_path)
-#     sample_name = sample_file[0].file_name
+    # For Databricks volumes, we need to use the /dbfs prefix
+    local_path = file_path
+    if file_path.startswith("/Volumes/"):
+        local_path = "/dbfs" + file_path
 
-#     print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
-#     print(f"   Path: {sample_path}")
+    try:
+        doc = fitz.open(local_path)
+        n_pages = len(doc)
+        print(f"  📄 Document has {n_pages} pages")
 
-#     sql = f'''
-#         with parsed_documents AS (
-#         SELECT
-#             path,
-#             ai_parse_document(content
-#             ,
-#             map(
-#             'version', '2.0',
-#             'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-#             'descriptionElementTypes', '*'
-#             )
-#         ) as parsed
-#         FROM
-#             read_files('{sample_path}', format => 'binaryFile')
-#         )
-#         select * from parsed_documents
-#         '''
+        for page_num, page in enumerate(doc, start=1):
+            page_height = page.rect.height
+            page_width = page.rect.width
 
-#     parsed_results = [row.parsed for row in spark.sql(sql).collect()]
-# else:
-#     print("⚠️  No files in bronze table yet - run bronze ingestion first")
+            # Define thresholds for header/footer detection (8% of page height)
+            header_threshold = page_height * 0.08
+            footer_threshold = page_height * 0.92
 
-# COMMAND ----------
+            # Method 1: Get words with positions for better extraction (from example)
+            # word_tuple format: (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+            words_data = page.get_text("words")
 
-# MAGIC %md
-# MAGIC ### Interactive Document Viewer
-# MAGIC
-# MAGIC Use the controls below to navigate through pages. The viewer provides:
-# MAGIC - **Previous/Next buttons** for sequential navigation
-# MAGIC - **Slider** for quick page selection
-# MAGIC - **Dropdown** for precise page selection
-# MAGIC - **Hover tooltips** over bounding boxes to see element content
+            # Group words by their vertical position into header, body, footer
+            header_words = []
+            body_words = []
+            footer_words = []
 
-# COMMAND ----------
+            for word_tuple in words_data:
+                x0, y0, x1, y1, text, block_no, line_no, word_no = word_tuple
 
-# from src.sql.functions.document_renderer import render_ai_parse_output_interactive
+                if not text.strip():
+                    continue
 
-# # Launch interactive viewer with page navigation
-# render_ai_parse_output_interactive(parsed_results)
+                # Classify by vertical position
+                if y0 < header_threshold:
+                    header_words.append((text, y0, line_no, block_no))
+                elif y1 > footer_threshold:
+                    footer_words.append((text, y0, line_no, block_no))
+                else:
+                    body_words.append((text, y0, line_no, block_no))
+
+            # Helper function to group words into text blocks by line proximity
+            def words_to_text_blocks(words: List[Tuple], threshold: float = 5.0) -> List[str]:
+                """Group words into text blocks based on line proximity."""
+                if not words:
+                    return []
+
+                # Sort by y position, then by block/line
+                sorted_words = sorted(words, key=lambda w: (w[1], w[3], w[2]))
+
+                blocks = []
+                current_block = [sorted_words[0][0]]
+                current_y = sorted_words[0][1]
+
+                for word, y, line_no, block_no in sorted_words[1:]:
+                    # If y position jumps significantly, start new block
+                    if abs(y - current_y) > threshold:
+                        block_text = ' '.join(current_block).strip()
+                        if block_text:
+                            blocks.append(block_text)
+                        current_block = [word]
+                        current_y = y
+                    else:
+                        current_block.append(word)
+                        current_y = y
+
+                # Don't forget the last block
+                if current_block:
+                    block_text = ' '.join(current_block).strip()
+                    if block_text:
+                        blocks.append(block_text)
+
+                return blocks
+
+            # Process header elements
+            header_blocks = words_to_text_blocks(header_words)
+            for block_text in header_blocks:
+                if block_text:
+                    elements.append({
+                        "file_id": file_id,
+                        "file_name": file_name,
+                        "effective_year": effective_year,
+                        "element_type": "page_header",
+                        "element_content": block_text,
+                        "page_number": page_num,
+                        "is_page_metadata": True
+                    })
+
+            # Process body elements - use get_text("blocks") for better paragraph grouping
+            # This preserves reading order and paragraph structure better than word-by-word
+            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+
+            for block in blocks:
+                if block.get("type") == 0:  # Text block
+                    block_top = block.get("bbox", [0, 0, 0, 0])[1]
+                    block_bottom = block.get("bbox", [0, 0, 0, 0])[3]
+
+                    # Skip headers and footers (already processed)
+                    if block_top < header_threshold or block_bottom > footer_threshold:
+                        continue
+
+                    # Extract text from lines within the block
+                    block_text = ""
+                    for line in block.get("lines", []):
+                        line_text = ""
+                        for span in line.get("spans", []):
+                            text = span.get("text", "")
+                            if text:
+                                line_text += text
+                        if line_text.strip():
+                            block_text += line_text + "\n"
+
+                    block_text = block_text.strip()
+
+                    if block_text:
+                        elements.append({
+                            "file_id": file_id,
+                            "file_name": file_name,
+                            "effective_year": effective_year,
+                            "element_type": "text",
+                            "element_content": block_text,
+                            "page_number": page_num,
+                            "is_page_metadata": False
+                        })
+
+            # Process footer elements
+            footer_blocks = words_to_text_blocks(footer_words)
+            for block_text in footer_blocks:
+                if block_text:
+                    elements.append({
+                        "file_id": file_id,
+                        "file_name": file_name,
+                        "effective_year": effective_year,
+                        "element_type": "page_footer",
+                        "element_content": block_text,
+                        "page_number": page_num,
+                        "is_page_metadata": True
+                    })
+
+        doc.close()
+
+        # Summary stats
+        header_count = sum(1 for e in elements if e["element_type"] == "page_header")
+        footer_count = sum(1 for e in elements if e["element_type"] == "page_footer")
+        text_count = sum(1 for e in elements if e["element_type"] == "text")
+        print(f"  📊 Extracted: {header_count} headers, {text_count} text blocks, {footer_count} footers")
+
+    except Exception as e:
+        print(f"Error parsing {file_name}: {str(e)}")
+        raise
+
+    return elements
+
+print("✅ PyMuPDF parser function defined (enhanced with word-level extraction)")
 
 # COMMAND ----------
 
@@ -273,135 +372,71 @@ if file_count > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 2: Extract TOC and Measure Text with SQL
+# MAGIC ### Step 2: Parse Documents with PyMuPDF and Extract Elements
 # MAGIC
-# MAGIC We want to find the table of contents so we understand where each and every measure lives.
+# MAGIC Parse all PDF documents using PyMuPDF to extract text elements with positional classification.
 
 # COMMAND ----------
 
 if file_count > 0:
-    print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
-    
+    print(f"🔍 Parsing {file_count} document(s) with PyMuPDF...")
+
     # Collect file list (small operation)
     files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
-    
-    # Parse all documents - keep as DataFrames to preserve VARIANT type
-    parsed_dfs = []
-    
+
+    # Parse all documents
+    all_elements = []
+
     from tqdm import tqdm
     for file_row in tqdm(files_list, desc="Parsing documents"):
         try:
             print(f"\n📄 Parsing: {file_row.file_name}")
-            
-            # Don't collect! Keep as DataFrame to preserve VARIANT type
-            parsed_df = spark.sql(f"""
-                SELECT
-                    '{file_row.file_id}' AS file_id,
-                    '{file_row.file_name}' AS file_name,
-                    CAST({file_row.effective_year} AS INT) AS effective_year,
-                    ai_parse_document(
-                        content,
-                        map(
-                            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-                            'descriptionElementTypes', '*'
-                        )
-                    ) AS parsed
-                FROM READ_FILES(
-                    '{file_row.file_path}',
-                    format => 'binaryFile'
-                )
-            """)
-            
-            parsed_dfs.append(parsed_df)
-            print(f"   ✅ Parsed successfully")
-            
+
+            # Parse PDF with PyMuPDF
+            elements = parse_pdf_with_pymupdf(
+                file_path=file_row.file_path,
+                file_id=file_row.file_id,
+                file_name=file_row.file_name,
+                effective_year=file_row.effective_year
+            )
+
+            all_elements.extend(elements)
+            print(f"   ✅ Extracted {len(elements)} elements")
+
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
             raise e
-    
-    print(f"\n📊 Successfully parsed {len(parsed_dfs)} document(s)")
-    
-    # Union all DataFrames to preserve VARIANT type
-    if parsed_dfs:
-        from functools import reduce
-        from pyspark.sql.functions import expr
-        
-        # Union all parsed DataFrames (preserves VARIANT type)
-        parsed_docs_df = reduce(lambda a, b: a.union(b), parsed_dfs)
-        
-        # Extract full text and error status
-        parsed_docs_df = parsed_docs_df.withColumn(
-            "full_text",
-            expr("""
-                concat_ws(
-                    '\n\n',
-                    transform(
-                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
-                        element -> try_cast(element:content AS STRING)
-                    )
-                )
-            """)
-        ).withColumn(
-            "error_status",
-            expr("try_cast(parsed:error_status AS STRING)")
-        )
-        
-        # Register as temp view for SQL access
-        parsed_docs_df.createOrReplaceTempView("parsed_documents")
 
-        print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
-        print(f"   Available columns: file_id, file_name, effective_year, parsed, full_text, error_status")
+    print(f"\n📊 Successfully parsed {len(files_list)} document(s)")
+    print(f"   Total elements extracted: {len(all_elements):,}")
 
-        # Display summary
-        display(parsed_docs_df.select("file_id", "file_name", "effective_year", "error_status"))
+    # Create DataFrame from elements
+    if all_elements:
+        from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType
 
-        # Extract elements with page numbers
-        print("\n🔍 Extracting elements with page numbers...")
+        elements_schema = StructType([
+            StructField("file_id", StringType(), False),
+            StructField("file_name", StringType(), False),
+            StructField("effective_year", IntegerType(), False),
+            StructField("element_type", StringType(), False),
+            StructField("element_content", StringType(), True),
+            StructField("page_number", IntegerType(), False),
+            StructField("is_page_metadata", BooleanType(), False)
+        ])
 
-        elements_df = spark.sql("""
-            WITH elements AS (
-                SELECT
-                    file_id,
-                    file_name,
-                    effective_year,
-                    el,
-                    try_cast(el:type AS STRING) AS element_type,
-                    try_cast(el:content AS STRING) AS element_content,
-                    /* Prefer top-level page_id if present, else fallback to bbox page_id */
-                    coalesce(
-                        try_cast(el:page_id AS INT),
-                        try_cast(el:bbox[0]:page_id AS INT)
-                    ) AS page_index_0_based
-                FROM parsed_documents
-                LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
-                WHERE try_cast(el:content AS STRING) IS NOT NULL
-            )
-            SELECT
-                file_id,
-                file_name,
-                effective_year,
-                element_type,
-                element_content,
-                page_index_0_based + 1 AS page_number,
-                -- Flag for page headers and footers for special handling
-                CASE
-                    WHEN element_type IN ('page_header', 'page_footer') THEN true
-                    ELSE false
-                END AS is_page_metadata
-            FROM elements
-        """)
+        elements_df = spark.createDataFrame(all_elements, schema=elements_schema)
 
         # Register as temp view
         elements_df.createOrReplaceTempView("elements")
         element_count = elements_df.count()
 
         print(f"✅ Created 'elements' temp view with {element_count:,} elements")
-        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number")
+        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number, is_page_metadata")
 
         # Display element summary
         display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
     else:
-        print("⚠️  No documents successfully parsed")
+        print("⚠️  No elements extracted from documents")
 else:
     print("⚠️  No files to process")
 
