@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Silver Layer: HEDIS Measures Definitions Extraction
 # MAGIC
-# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using Databricks `ai_parse_document` and `ai_query` SQL functions.
+# MAGIC This notebook extracts structured HEDIS measure definitions from PDFs using PyMuPDF and `ai_query` SQL functions.
 # MAGIC
 # MAGIC **Module**: Silver Definitions (Step 2 of 3)
 # MAGIC
@@ -13,7 +13,7 @@
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_definitions`
 # MAGIC
 # MAGIC **Features**:
-# MAGIC - AI-powered PDF parsing with `ai_parse_document` SQL function
+# MAGIC - PDF parsing with PyMuPDF (fitz) for text extraction
 # MAGIC - Table of Contents parsing for measure boundaries
 # MAGIC - SQL-based structured extraction with `ai_query`
 # MAGIC - Idempotent writes with MERGE
@@ -35,17 +35,23 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# Widgets
-dbutils.widgets.text("catalog_name", "main", "Catalog Name")
-dbutils.widgets.text("schema_name", "hedis_measurements", "Schema Name")
-dbutils.widgets.text("volume_name", "hedis", "Volume Name")
-dbutils.widgets.text("model_endpoint", "databricks-claude-opus-4-1", "LLM Model Endpoint")
+import yaml
 
-# Get parameters
+# Load configuration from config.yaml
+with open("../config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+# Create widgets with config values as defaults
+dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog Name")
+dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema Name")
+dbutils.widgets.text("volume_name", config.get("volume_name", "hedis"), "Volume Name")
+dbutils.widgets.text("llm_endpoint", config.get("llm_endpoint", "databricks-claude-opus-4-1"), "LLM Model Endpoint")
+
+# Get parameters (widgets override config if changed)
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
-model_endpoint = dbutils.widgets.get("model_endpoint")
+model_endpoint = dbutils.widgets.get("llm_endpoint")
 
 # Table names
 bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
@@ -91,99 +97,35 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## AI-Powered PDF Parsing with `ai_parse_document`
+# MAGIC ## PDF Parsing with PyMuPDF
 # MAGIC
-# MAGIC This pipeline uses Databricks' native `ai_parse_document` SQL function (Runtime 17.1+) for PDF text extraction.
-# MAGIC The function returns structured JSON with classified elements (text, table, header, figure) and handles complex layouts.
+# MAGIC This pipeline uses PyMuPDF (fitz) for PDF text extraction. The library extracts text blocks with positional
+# MAGIC information, allowing classification of elements as headers, footers, or body text based on their position on the page.
 # MAGIC
-# MAGIC **Basic SQL usage:**
-# MAGIC ```sql
-# MAGIC WITH parsed_documents AS (
-# MAGIC   SELECT
-# MAGIC     path,
-# MAGIC     ai_parse_document(
-# MAGIC       content,
-# MAGIC       map(
-# MAGIC         'imageOutputPath', '/Volumes/catalog/schema/volume/parsed_images/',
-# MAGIC         'descriptionElementTypes', '*'
-# MAGIC       )
-# MAGIC     ) AS parsed
-# MAGIC   FROM READ_FILES('/Volumes/catalog/schema/volume/*.pdf', format => 'binaryFile')
-# MAGIC )
-# MAGIC SELECT * FROM parsed_documents WHERE try_cast(parsed:error_status AS STRING) IS NULL;
-# MAGIC ```
+# MAGIC **Element Classification:**
+# MAGIC - **page_header**: Text in the top 8% of the page
+# MAGIC - **page_footer**: Text in the bottom 8% of the page
+# MAGIC - **text**: Body text content
 # MAGIC
-# MAGIC The demo below shows the function in action with a sample HEDIS file.
+# MAGIC The parser is implemented in `src/extraction/pdfparser.py` and follows patterns from the dbx-hls-vector-search example.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Demo: Extract Structure from Sample PDF
+# MAGIC ### Initialize PDF Parser
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC **NOTE**: if using serverless, make sure you are environment version `4 - Python 3.12, Scala 2.13`
+from src.extraction.pdfparser import PDFParser
 
-# COMMAND ----------
+# Initialize the PDF parser
+pdfparser = PDFParser(
+    header_threshold_pct=0.08,  # Top 8% of page is header zone
+    footer_threshold_pct=0.92,  # Bottom 8% of page is footer zone
+    line_grouping_threshold=5.0  # Pixel threshold for grouping words into lines
+)
 
-# DBTITLE 1,Document Extraction - This cell may take some time
-import os
-
-# Get a sample file path from bronze table; this does one, in future we will scale this to many files.
-sample_file = spark.sql(f"""
-    SELECT file_path, file_name
-    FROM {bronze_table}
-    LIMIT 1
-""").collect()
-
-if sample_file:
-    sample_path = sample_file[0].file_path
-    directory = os.path.dirname(sample_path)
-    sample_name = sample_file[0].file_name
-
-    print(f"📄 Demonstrating ai_parse_document with: {sample_name}")
-    print(f"   Path: {sample_path}")
-
-    sql = f'''
-        with parsed_documents AS (
-        SELECT
-            path,
-            ai_parse_document(content
-            ,
-            map(
-            'version', '2.0',
-            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-            'descriptionElementTypes', '*'
-            )
-        ) as parsed
-        FROM
-            read_files('{sample_path}', format => 'binaryFile')
-        )
-        select * from parsed_documents
-        '''
-
-    parsed_results = [row.parsed for row in spark.sql(sql).collect()]
-else:
-    print("⚠️  No files in bronze table yet - run bronze ingestion first")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Interactive Document Viewer
-# MAGIC
-# MAGIC Use the controls below to navigate through pages. The viewer provides:
-# MAGIC - **Previous/Next buttons** for sequential navigation
-# MAGIC - **Slider** for quick page selection
-# MAGIC - **Dropdown** for precise page selection
-# MAGIC - **Hover tooltips** over bounding boxes to see element content
-
-# COMMAND ----------
-
-from src.sql.functions.document_renderer import render_ai_parse_output_interactive
-
-# Launch interactive viewer with page navigation
-render_ai_parse_output_interactive(parsed_results)
+print("✅ PDFParser initialized from src.extraction.pdfparser")
 
 # COMMAND ----------
 
@@ -249,7 +191,7 @@ files_to_process = spark.sql(f"""
         SELECT DISTINCT file_id
         FROM {silver_table}
     ) s ON b.file_id = s.file_id
-    WHERE s.file_id IS NULL
+    -- WHERE s.file_id IS NULL
     ORDER BY b.ingestion_timestamp DESC
 """)
 
@@ -262,142 +204,71 @@ if file_count > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Step 2: Extract TOC and Measure Text with SQL
+# MAGIC ### Step 2: Parse Documents with PyMuPDF and Extract Elements
 # MAGIC
-# MAGIC We want to find the table of contents so we understand where each and every measure lives.
+# MAGIC Parse all PDF documents using PyMuPDF to extract text elements with positional classification.
 
 # COMMAND ----------
 
 if file_count > 0:
-    print(f"🔍 Parsing {file_count} document(s) with ai_parse_document...")
-    
+    print(f"🔍 Parsing {file_count} document(s) with PyMuPDF...")
+
     # Collect file list (small operation)
     files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
-    
-    # Parse all documents
-    all_parsed_docs = []
-    
+
+    # Parse all documents using pdfparser.document_parser()
+    all_elements = []
+
     from tqdm import tqdm
     for file_row in tqdm(files_list, desc="Parsing documents"):
         try:
             print(f"\n📄 Parsing: {file_row.file_name}")
-            
-            # Parse the document
-            parsed_result = spark.sql(f"""
-                SELECT
-                    '{file_row.file_id}' AS file_id,
-                    '{file_row.file_name}' AS file_name,
-                    CAST({file_row.effective_year} AS INT) AS effective_year,
-                    ai_parse_document(
-                        content,
-                        map(
-                            'imageOutputPath', '{IMAGE_OUTPUT_PATH}',
-                            'descriptionElementTypes', '*'
-                        )
-                    ) AS parsed
-                FROM READ_FILES(
-                    '{file_row.file_path}',
-                    format => 'binaryFile'
-                )
-            """).collect()
 
-            # Process ALL results from the parse (defensive - typically 1 per file)
-            if parsed_result:
-                for result in parsed_result:
-                    all_parsed_docs.append({
-                        'file_id': result.file_id,
-                        'file_name': result.file_name,
-                        'effective_year': result.effective_year,
-                        'parsed': result.parsed
-                    })
-                print(f"   ✅ Parsed successfully ({len(parsed_result)} result(s))")
-            
+            # Parse PDF with pdfparser.document_parser()
+            elements = pdfparser.document_parser(
+                file_path=file_row.file_path,
+                file_id=file_row.file_id,
+                file_name=file_row.file_name,
+                effective_year=file_row.effective_year
+            )
+
+            all_elements.extend(elements)
+            print(f"   ✅ Extracted {len(elements)} elements")
+
         except Exception as e:
             print(f"   ❌ Failed to parse: {str(e)}")
             raise e
-    
-    print(f"\n📊 Successfully parsed {len(all_parsed_docs)} document(s)")
-    
-    # Create DataFrame from parsed documents
-    if all_parsed_docs:
-        from pyspark.sql.functions import expr
-        
-        # Create DataFrame with parsed content
-        parsed_docs_df = spark.createDataFrame(all_parsed_docs)
-        
-        # Extract full text and error status
-        parsed_docs_df = parsed_docs_df.withColumn(
-            "full_text",
-            expr("""
-                concat_ws(
-                    '\n\n',
-                    transform(
-                        try_cast(parsed:document:elements AS ARRAY<VARIANT>),
-                        element -> try_cast(element:content AS STRING)
-                    )
-                )
-            """)
-        ).withColumn(
-            "error_status",
-            expr("try_cast(parsed:error_status AS STRING)")
-        )
-        
-        # Register as temp view for SQL access
-        parsed_docs_df.createOrReplaceTempView("parsed_documents")
 
-        print(f"✅ Created 'parsed_documents' temp view with {parsed_docs_df.count()} document(s)")
-        print(f"   Available columns: file_id, file_name, effective_year, parsed, full_text, error_status")
+    print(f"\n📊 Successfully parsed {len(files_list)} document(s)")
+    print(f"   Total elements extracted: {len(all_elements):,}")
 
-        # Display summary
-        display(parsed_docs_df.select("file_id", "file_name", "effective_year", "error_status"))
+    # Create DataFrame from elements
+    if all_elements:
+        from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType
 
-        # Extract elements with page numbers
-        print("\n🔍 Extracting elements with page numbers...")
+        elements_schema = StructType([
+            StructField("file_id", StringType(), False),
+            StructField("file_name", StringType(), False),
+            StructField("effective_year", IntegerType(), False),
+            StructField("element_type", StringType(), False),
+            StructField("element_content", StringType(), True),
+            StructField("page_number", IntegerType(), False),
+            StructField("is_page_metadata", BooleanType(), False)
+        ])
 
-        elements_df = spark.sql("""
-            WITH elements AS (
-                SELECT
-                    file_id,
-                    file_name,
-                    effective_year,
-                    el,
-                    try_cast(el:type AS STRING) AS element_type,
-                    try_cast(el:content AS STRING) AS element_content,
-                    /* Prefer top-level page_id if present, else fallback to bbox page_id */
-                    coalesce(
-                        try_cast(el:page_id AS INT),
-                        try_cast(el:bbox[0]:page_id AS INT)
-                    ) AS page_index_0_based
-                FROM parsed_documents
-                LATERAL VIEW explode(try_cast(parsed:document:elements AS ARRAY<VARIANT>)) e AS el
-                WHERE try_cast(el:content AS STRING) IS NOT NULL
-            )
-            SELECT
-                file_id,
-                file_name,
-                effective_year,
-                element_type,
-                element_content,
-                page_index_0_based + 1 AS page_number,
-                -- Flag for page headers and footers for special handling
-                CASE
-                    WHEN element_type IN ('page_header', 'page_footer') THEN true
-                    ELSE false
-                END AS is_page_metadata
-            FROM elements
-        """)
+        elements_df = spark.createDataFrame(all_elements, schema=elements_schema)
 
         # Register as temp view
         elements_df.createOrReplaceTempView("elements")
         element_count = elements_df.count()
 
         print(f"✅ Created 'elements' temp view with {element_count:,} elements")
-        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number")
+        print(f"   Available columns: file_id, file_name, effective_year, element_type, element_content, page_number, is_page_metadata")
 
         # Display element summary
         display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
     else:
-        print("⚠️  No documents successfully parsed")
+        print("⚠️  No elements extracted from documents")
 else:
     print("⚠️  No files to process")
 

@@ -23,6 +23,112 @@ variables:
     description: "Embedding model endpoint"
     default: "databricks-bge-large-en"
 
+resources:
+  jobs:
+    hedis_e2e_pipeline:
+      name: "HEDIS E2E Pipeline - Extraction to Agent Deployment"
+      description: |
+        End-to-end pipeline for HEDIS measure ingestion and agent deployment.
+
+        Pipeline stages:
+        1. Bronze: Ingest HEDIS PDF metadata
+        2. Silver Definitions: Extract measure definitions with LLM
+        3. Silver Chunks: Create vector search chunks
+        4. Agent Setup: Create Unity Catalog functions
+        5. Agent Deploy: Deploy HEDIS chat agent
+
+        Configuration is loaded from notebooks/config.yaml
+
+      max_concurrent_runs: 1
+      timeout_seconds: 7200  # 2 hours
+
+      # Email notifications on failure
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+
+      # Job cluster configuration
+      job_clusters:
+        - job_cluster_key: hedis_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+            custom_tags:
+              project: "hedis-measure-ingest"
+              environment: "${bundle.target}"
+
+      tasks:
+        # Stage 1: Bronze - Metadata Ingestion
+        - task_key: bronze_metadata_ingestion
+          job_cluster_key: hedis_cluster
+          notebook_task:
+            notebook_path: "${workspace.file_path}/notebooks/extraction/01_bronze_metadata_ingestion"
+            source: WORKSPACE
+          timeout_seconds: 600
+          libraries:
+            - pypi:
+                package: "pyyaml"
+
+        # Stage 2: Silver - Definitions Extraction
+        - task_key: silver_definitions_extraction
+          depends_on:
+            - task_key: bronze_metadata_ingestion
+          job_cluster_key: hedis_cluster
+          notebook_task:
+            notebook_path: "${workspace.file_path}/notebooks/extraction/02_silver_definitions_extraction"
+            source: WORKSPACE
+          timeout_seconds: 1800  # 30 minutes for LLM processing
+          libraries:
+            - pypi:
+                package: "pyyaml"
+
+        # Stage 3: Silver - Chunks Processing
+        - task_key: silver_chunks_processing
+          depends_on:
+            - task_key: bronze_metadata_ingestion
+          job_cluster_key: hedis_cluster
+          notebook_task:
+            notebook_path: "${workspace.file_path}/notebooks/extraction/03_silver_chunks_processing"
+            source: WORKSPACE
+          timeout_seconds: 1200  # 20 minutes
+          libraries:
+            - pypi:
+                package: "pyyaml"
+
+        # Stage 4: Setup UC Functions
+        - task_key: setup_uc_functions
+          depends_on:
+            - task_key: silver_definitions_extraction
+            - task_key: silver_chunks_processing
+          job_cluster_key: hedis_cluster
+          notebook_task:
+            notebook_path: "${workspace.file_path}/notebooks/agents/01_setup_uc_functions"
+            source: WORKSPACE
+          timeout_seconds: 300
+          libraries:
+            - pypi:
+                package: "pyyaml"
+
+        # Stage 5: Agent Deployment
+        - task_key: agent_deployment
+          depends_on:
+            - task_key: setup_uc_functions
+          job_cluster_key: hedis_cluster
+          notebook_task:
+            notebook_path: "${workspace.file_path}/notebooks/agents/02_agent_deployment"
+            source: WORKSPACE
+          timeout_seconds: 1800  # 30 minutes for agent deployment
+          libraries:
+            - pypi:
+                package: "pyyaml"
+
+      # Optional: Add schedule (commented out by default)
+      # schedule:
+      #   quartz_cron_expression: "0 0 2 * * ?"  # Run daily at 2 AM
+      #   timezone_id: "America/Los_Angeles"
+      #   pause_status: "UNPAUSED"
+
 targets:
   dev:
     default: true
@@ -40,3 +146,12 @@ targets:
     variables:
       catalog_name: "prod_catalog"
       schema_name: "hedis_pipeline_prod"
+    # Override settings for production
+    resources:
+      jobs:
+        hedis_e2e_pipeline:
+          email_notifications:
+            on_success:
+              - your-team@company.com
+            on_failure:
+              - your-team@company.com
