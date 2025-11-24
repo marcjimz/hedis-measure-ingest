@@ -7,13 +7,13 @@
 # MAGIC **Module**: Silver Chunks for Search (Step 3 of 3)
 # MAGIC
 # MAGIC **Inputs**:
-# MAGIC - Silver table: `{catalog}.{schema}.hedis_definitions` (from notebook 02)
+# MAGIC - Bronze table: `{catalog}.{schema}.hedis_file_metadata`
 # MAGIC
 # MAGIC **Outputs**:
 # MAGIC - Silver table: `{catalog}.{schema}.hedis_measures_chunks`
 # MAGIC
 # MAGIC **Features**:
-# MAGIC - Uses pre-parsed elements from hedis_definitions table
+# MAGIC - PyMuPDF-based PDF parsing with position-aware element extraction
 # MAGIC - Header-aware chunking with configurable overlap
 # MAGIC - Page headers and footers preserved in each chunk
 # MAGIC - Ready for vector search delta sync
@@ -65,13 +65,13 @@ embedding_model = dbutils.widgets.get("embedding_model")
 vector_index_name = dbutils.widgets.get("vector_index_name")
 
 # Table and index names
-silver_definitions_table = f"{catalog_name}.{schema_name}.hedis_definitions"
+bronze_table = f"{catalog_name}.{schema_name}.hedis_file_metadata"
 silver_chunks_table = f"{catalog_name}.{schema_name}.hedis_measures_chunks"
 volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 index_name = f"{catalog_name}.{schema_name}.{vector_index_name}"
 
 print(f"📋 Configuration:")
-print(f"   Source Table: {silver_definitions_table}")
+print(f"   Bronze Table: {bronze_table}")
 print(f"   Chunks Table: {silver_chunks_table}")
 print(f"   Volume Path: {volume_path}")
 print(f"   Chunk Size: {chunk_size} tokens")
@@ -102,10 +102,10 @@ print("✅ Environment initialized")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Structure-Aware Chunking from Definitions
+# MAGIC ## Structure-Aware Chunking with PyMuPDF
 # MAGIC
-# MAGIC This notebook reads pre-parsed elements from the `hedis_definitions` table (populated by notebook 02 using PyMuPDF).
-# MAGIC The parsed elements include position-based classification for headers, footers, and body text.
+# MAGIC This notebook uses PyMuPDF to parse PDFs and extract elements with position-based classification.
+# MAGIC Elements are classified as headers (top 8%), footers (bottom 8%), or body text based on vertical position.
 # MAGIC
 # MAGIC **How it helps chunking:**
 # MAGIC - Page headers and footers are separated from body content
@@ -172,19 +172,19 @@ print(f"✅ Silver chunks table created/verified with CDF enabled: {silver_chunk
 # MAGIC %md
 # MAGIC ## Select Files to Process
 # MAGIC
-# MAGIC Find files in definitions table that haven't been chunked yet.
+# MAGIC Find files in bronze table that haven't been chunked yet.
 
 # COMMAND ----------
 
 files_to_process = spark.sql(f"""
-    SELECT DISTINCT d.file_id, d.file_name, d.effective_year
-    FROM {silver_definitions_table} d
+    SELECT b.file_id, b.file_path, b.file_name, b.effective_year
+    FROM {bronze_table} b
     LEFT JOIN (
         SELECT DISTINCT file_id
         FROM {silver_chunks_table}
-    ) c ON d.file_id = c.file_id
+    ) c ON b.file_id = c.file_id
     WHERE c.file_id IS NULL
-    ORDER BY d.file_name
+    ORDER BY b.ingestion_timestamp DESC
 """)
 
 file_count = files_to_process.count()
@@ -196,37 +196,66 @@ if file_count > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Load Elements from Definitions Table
+# MAGIC ## Parse Documents with PyMuPDF
 # MAGIC
-# MAGIC Read pre-parsed elements from the `hedis_definitions` table (populated by notebook 02 using PyMuPDF).
+# MAGIC Use PDFParser to extract elements with position-based classification (headers, footers, body text).
 
 # COMMAND ----------
 
 if file_count > 0:
-    # Get list of file IDs to process
-    file_ids = [row.file_id for row in files_to_process.collect()]
-    file_ids_str = "', '".join(file_ids)
+    from src.extraction.pdfparser import PDFParser
+    from tqdm import tqdm
 
-    print(f"📖 Loading elements for {len(file_ids)} file(s) from definitions table...")
+    print(f"🔍 Parsing {file_count} document(s) with PyMuPDF...")
 
-    # Read elements directly from definitions table
-    elements_df = spark.sql(f"""
-        SELECT
-            file_id,
-            file_name,
-            effective_year,
-            element_type,
-            element_content,
-            page_number,
-            is_page_metadata
-        FROM {silver_definitions_table}
-        WHERE file_id IN ('{file_ids_str}')
-    """)
+    # Initialize parser
+    pdfparser = PDFParser(
+        header_threshold_pct=0.08,
+        footer_threshold_pct=0.92,
+        line_grouping_threshold=5.0
+    )
 
+    # Collect file list
+    files_list = files_to_process.select("file_id", "file_name", "file_path", "effective_year").collect()
+
+    # Parse all documents
+    all_elements = []
+    for file_row in tqdm(files_list, desc="Parsing documents"):
+        try:
+            print(f"\n📄 Parsing: {file_row.file_name}")
+
+            elements = pdfparser.document_parser(
+                file_path=file_row.file_path,
+                file_id=file_row.file_id,
+                file_name=file_row.file_name,
+                effective_year=file_row.effective_year
+            )
+
+            all_elements.extend(elements)
+            print(f"   ✅ Extracted {len(elements)} elements")
+
+        except Exception as e:
+            print(f"   ❌ Failed to parse: {str(e)}")
+            raise
+
+    print(f"\n📊 Total elements extracted: {len(all_elements):,}")
+
+    # Create DataFrame from parsed elements
+    elements_schema = StructType([
+        StructField("file_id", StringType(), False),
+        StructField("file_name", StringType(), False),
+        StructField("effective_year", IntegerType(), False),
+        StructField("element_type", StringType(), False),
+        StructField("element_content", StringType(), False),
+        StructField("page_number", IntegerType(), False),
+        StructField("is_page_metadata", BooleanType(), False)
+    ])
+
+    elements_df = spark.createDataFrame(all_elements, schema=elements_schema)
     element_count = elements_df.count()
     elements_df.createOrReplaceTempView("elements")
 
-    print(f"✅ Loaded {element_count:,} elements from definitions table")
+    print(f"✅ Created 'elements' temp view with {element_count:,} elements")
 
     # Display element summary
     display(elements_df.groupBy("file_name", "element_type").count().orderBy("file_name", "element_type"))
