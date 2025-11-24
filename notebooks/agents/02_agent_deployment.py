@@ -5,11 +5,11 @@
 # MAGIC Build and deploy a LangGraph agent for HEDIS measure analysis on Databricks.
 # MAGIC
 # MAGIC **Tech Stack:**
-# MAGIC - 🏢 **Databricks Foundation Models** - Pay-per-token LLM endpoints
+# MAGIC - 🏢 **Databricks Foundation Models** - Pay-per-token LLM endpoints (Sonnet 4.5)
 # MAGIC - 🗄️ **Lakebase (Postgres)** - Persistent conversation management
 # MAGIC - 🔄 **LangGraph** - Stateful agent workflows
 # MAGIC - 📊 **MLflow** - Model tracking and deployment
-# MAGIC - 🔧 **Unity Catalog Functions** - Measure lookup, vector search, query expansion
+# MAGIC - 🔧 **Unity Catalog Functions** - Vector search over HEDIS chunks
 
 # COMMAND ----------
 
@@ -159,7 +159,7 @@ agent = HEDISChatAgentFactory.create(
 
 print("\n✅ HEDIS Chat Agent Created!")
 print(f"  - Effective Year: {agent.effective_year}")
-print(f"  - Tools: measures_definition_lookup, measures_document_search, measures_search_expansion")
+print(f"  - Tools: measures_document_search")
 print(f"  - Persistence: {'ENABLED' if ENABLE_PERSISTENCE else 'DISABLED'}")
 
 # COMMAND ----------
@@ -255,9 +255,7 @@ agent_config = {
 resources = [
     DatabricksServingEndpoint(endpoint_name=ENDPOINT_NAME),
     DatabricksVectorSearchIndex(index_name=VS_INDEX),
-    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_definition_lookup"),
     DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_document_search"),
-    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_search_expansion"),
 ]
 
 if ENABLE_PERSISTENCE:

@@ -4,8 +4,8 @@ HEDIS Chat Agent
 A production-ready LangGraph-based chat agent for HEDIS measure analysis.
 
 Features:
-- Answer questions about HEDIS measures using vector search and measure definitions
-- Integration with Unity Catalog functions (measure lookup, document search, query expansion)
+- Answer questions about HEDIS measures using vector search over document chunks
+- Integration with Unity Catalog function for document search
 - Configurable persistence with PostgreSQL checkpointing
 - Streaming and non-streaming support
 - Thread-based conversation management
@@ -511,9 +511,7 @@ class HEDISChatAgentFactory:
 
     # Default UC functions for HEDIS operations
     DEFAULT_UC_FUNCTIONS = [
-        "measures_definition_lookup",  # Tool for looking up measure definitions
         "measures_document_search",    # Tool for semantic search over HEDIS chunks
-        "measures_search_expansion"    # Tool for AI-powered query expansion
     ]
 
     @staticmethod
@@ -562,7 +560,7 @@ class HEDISChatAgentFactory:
 
         Args:
             endpoint_name: Databricks model serving endpoint
-            uc_function_names: UC function names for tools (default: measure_lookup, vector_search)
+            uc_function_names: UC function names for tools (default: measures_document_search)
             catalog_name: Unity Catalog catalog name (for namespaced functions)
             schema_name: Unity Catalog schema name (for namespaced functions)
             conn_string: Database connection string (deprecated, use connection_pool)
