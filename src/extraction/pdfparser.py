@@ -8,7 +8,6 @@ Uses Databricks SDK WorkspaceClient to download files from Unity Catalog Volumes
 """
 
 import fitz  # PyMuPDF
-import base64
 from typing import List, Dict, Any, Tuple, Optional
 
 from databricks.sdk import WorkspaceClient
@@ -78,14 +77,8 @@ class PDFParser:
             print(f"  📥 Downloading from volume: {file_path}")
 
         response = self.workspace_client.files.download(file_path=file_path)
-        pdf_bytes_encoded = response.contents.read()
-
-        # The SDK returns base64-encoded content
-        try:
-            pdf_bytes = base64.b64decode(pdf_bytes_encoded)
-        except Exception:
-            # If it's not base64 encoded, use as-is
-            pdf_bytes = pdf_bytes_encoded
+        # SDK returns raw bytes via BinaryIO contents
+        pdf_bytes = response.contents.read()
 
         if verbose:
             print(f"  📦 Downloaded {len(pdf_bytes):,} bytes")
