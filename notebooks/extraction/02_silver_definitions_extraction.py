@@ -38,13 +38,8 @@ dbutils.library.restartPython()
 import yaml
 
 # Load configuration from config.yaml
-try:
-    with open("../config.yaml", "r") as f:
-        config = yaml.safe_load(f)
-except FileNotFoundError:
-    # Fallback for different execution contexts
-    with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+with open("../config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
 # Create widgets with config values as defaults
 dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog Name")
