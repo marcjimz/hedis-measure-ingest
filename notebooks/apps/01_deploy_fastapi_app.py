@@ -266,6 +266,7 @@ try:
 except Exception as e:
     print(f"⚠️  Validation error: {e}")
     print("This may be expected in notebook environment - deployment should work")
+    raise e
 
 # COMMAND ----------
 
@@ -341,6 +342,7 @@ try:
     else:
         print(f"❌ Deployment failed: {deploy_response.status_code}")
         print(f"   {deploy_response.text}")
+        raise e
 
 except Exception as e:
     print(f"❌ Error: {e}")
