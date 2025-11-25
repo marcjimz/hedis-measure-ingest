@@ -280,6 +280,14 @@ class HEDISChatAgent(ChatAgent):
                     ] + messages_with_system
 
             response = model_with_tools.invoke(messages_with_system, config)
+
+            # Debug: Log if agent made tool calls
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                print(f"  🤖 Agent made {len(response.tool_calls)} tool call(s)")
+                for i, tc in enumerate(response.tool_calls, 1):
+                    tool_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', 'unknown')
+                    print(f"     {i}. {tool_name}")
+
             return {"messages": [response]}
 
         # Build the graph
@@ -537,6 +545,9 @@ class HEDISChatAgentFactory:
 
         def wrapped_search_func(search_query: str, num_results: int = 5, filter_year: int = default_year):
             """Search HEDIS measure documents with automatic year filtering."""
+            # Debug: Log tool invocation
+            print(f"  🔍 Tool invoked: measures_document_search(query='{search_query[:50]}...', num_results={num_results}, filter_year={filter_year})")
+
             # Call the original tool with all three parameters
             return original_tool.invoke({
                 "search_query": search_query,
@@ -663,8 +674,14 @@ class HEDISChatAgentFactory:
                 # Wrap the tool to inject filter_year parameter
                 wrapped_tool = HEDISChatAgentFactory._wrap_search_tool(tool, effective_year)
                 wrapped_tools.append(wrapped_tool)
+                print(f"  Wrapped tool: {tool.name} -> filter_year default = {effective_year}")
             else:
                 wrapped_tools.append(tool)
+
+        # Debug: Print tool count
+        print(f"  Total tools registered: {len(wrapped_tools)}")
+        for i, tool in enumerate(wrapped_tools, 1):
+            print(f"    {i}. {tool.name}")
 
         # Return agent
         return HEDISChatAgent(
