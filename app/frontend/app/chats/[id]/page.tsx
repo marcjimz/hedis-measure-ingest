@@ -2,6 +2,14 @@ import { ChatInterface } from "@/components/chat-interface"
 import { NewChatForm } from "@/components/new-chat-form"
 import { mockChats, mockCurrentUser } from "@/lib/mock-data"
 
+// For static export: pre-generate pages for all mock chats
+// Dynamic IDs will be handled by FastAPI fallback to index.html
+export function generateStaticParams() {
+  return mockChats.map((chat) => ({
+    id: chat.id,
+  }))
+}
+
 export default async function ChatPage({
   params,
   searchParams,
@@ -11,9 +19,11 @@ export default async function ChatPage({
 }) {
   const { id } = await params
   const search = await searchParams
+  const patient = search.patient
+  const measure = search.measure
 
   if (id === "create") {
-    return <NewChatForm initialPatient={search.patient} />
+    return <NewChatForm initialPatient={patient} />
   }
 
   let chat = mockChats.find((c) => c.id === id)
@@ -23,7 +33,7 @@ export default async function ChatPage({
       id,
       userId: mockCurrentUser.id,
       context: {
-        patient: search.patient || undefined,
+        patient: patient || undefined,
       },
       messages: [],
       createdAt: new Date(),

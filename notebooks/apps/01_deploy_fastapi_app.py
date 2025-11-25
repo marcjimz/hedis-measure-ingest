@@ -1,25 +1,33 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # HEDIS FastAPI Application Deployment
+# MAGIC # HEDIS FastAPI Application Deployment (Mock Mode)
 # MAGIC
 # MAGIC Deploy a FastAPI web application for the HEDIS Chat Agent on Databricks Apps.
 # MAGIC
+# MAGIC **⚠️ IMPORTANT: This notebook deploys the app in MOCK MODE**
+# MAGIC - Uses stub data and fake responses for testing
+# MAGIC - No real Databricks agent or UC functions required
+# MAGIC - Perfect for validating application structure before production
+# MAGIC
 # MAGIC **What This Notebook Does:**
-# MAGIC - Creates a FastAPI wrapper around the HEDIS Chat Agent
-# MAGIC - Sets up chat history persistence with Delta Lake
-# MAGIC - Configures authentication and authorization
-# MAGIC - Deploys to Databricks Apps infrastructure
-# MAGIC - Provides health checks and monitoring
+# MAGIC - Deploys the complete app/backend/ FastAPI application
+# MAGIC - Configures MOCK_MODE=true for testing with stub data
+# MAGIC - Sets up Delta tables (for future production use)
+# MAGIC - Creates deployment scripts and configuration
+# MAGIC - Provides health checks and monitoring setup
 # MAGIC - Includes rollback procedures
 # MAGIC
 # MAGIC **Tech Stack:**
 # MAGIC - 🚀 **FastAPI** - High-performance web framework
-# MAGIC - 🤖 **HEDIS Chat Agent** - LangGraph-based conversational AI
-# MAGIC - 📊 **Delta Lake** - Chat history and session persistence
-# MAGIC - 🔐 **Unity Catalog** - Authentication and governance
+# MAGIC - 🧪 **Mock Services** - In-memory chat history, fake HEDIS responses
+# MAGIC - 📊 **Delta Lake** - Tables created but not used in mock mode
 # MAGIC - 🏢 **Databricks Apps** - Serverless application hosting
 # MAGIC
-# MAGIC **Prerequisites:**
+# MAGIC **Prerequisites for Mock Mode:**
+# MAGIC - ✅ app/backend/ directory with complete application code
+# MAGIC - ✅ Mock service files (automatically included)
+# MAGIC
+# MAGIC **Prerequisites for Production Mode (later):**
 # MAGIC - HEDIS infrastructure setup completed (run setup_infrastructure.py)
 # MAGIC - HEDIS agent deployed to Model Serving (run agents/02_agent_deployment.py)
 # MAGIC - Unity Catalog functions created (run agents/01_setup_uc_functions.py)
@@ -175,425 +183,56 @@ print(f"   Messages: {messages_count}")
 
 # COMMAND ----------
 
-# Create app directory structure
+# Verify app/backend/ directory exists with complete application code
 app_dir = repo_root / "app" / "backend"
-app_dir.mkdir(parents=True, exist_ok=True)
 
-# Write FastAPI application code
-app_code = '''"""
-HEDIS Chat FastAPI Application
+if not app_dir.exists():
+    raise FileNotFoundError(f"❌ Application directory not found: {app_dir}")
 
-A production-ready web API for the HEDIS Chat Agent.
-"""
+if not (app_dir / "main.py").exists():
+    raise FileNotFoundError(f"❌ Main application file not found: {app_dir / 'main.py'}")
 
-from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-import uuid
-import json
-from datetime import datetime
+print(f"✅ Using existing FastAPI application: {app_dir / 'main.py'}")
+print(f"   Application will run in MOCK MODE for testing")
+
+# Verify required application structure
+required_files = [
+    "main.py",
+    "config.py",
+    "routers/__init__.py",
+    "routers/chats.py",
+    "routers/reviews.py",
+    "models/__init__.py",
+    "models/api_models.py",
+    "services/mock_chat_history.py",
+    "databricks/mock_agent_service.py",
+    "databricks/mock_uc_functions.py"
+]
+
+missing_files = []
+for file_path in required_files:
+    if not (app_dir / file_path).exists():
+        missing_files.append(file_path)
+
+if missing_files:
+    print(f"\n⚠️  Warning: Missing some expected files:")
+    for f in missing_files:
+        print(f"   - {f}")
+    print(f"   Deployment may fail if these are required files.")
+else:
+    print(f"✅ All required application files verified")
+
+# List all files that will be deployed
+print(f"\n📦 Application structure:")
 import os
-import sys
-import pathlib
-
-# Add src to path
-repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
-src_path = repo_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.append(str(src_path))
-
-from mlflow.deployments import get_deploy_client
-from databricks.sdk import WorkspaceClient
-from pyspark.sql import SparkSession
-
-# Initialize clients
-deploy_client = get_deploy_client()
-w = WorkspaceClient()
-spark = SparkSession.builder.getOrCreate()
-
-# Configuration from environment
-CATALOG_NAME = os.getenv("CATALOG_NAME", "main")
-SCHEMA_NAME = os.getenv("SCHEMA_NAME", "hedis_measurements")
-AGENT_ENDPOINT = os.getenv("AGENT_ENDPOINT", "hedis_chat_agent")
-ENABLE_AUTH = os.getenv("ENABLE_AUTH", "true").lower() == "true"
-ALLOWED_USERS = os.getenv("ALLOWED_USERS", "").split(",") if os.getenv("ALLOWED_USERS") else []
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="HEDIS Chat API",
-    description="Conversational AI for HEDIS measure analysis",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure based on your requirements
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Pydantic models
-class ChatMessage(BaseModel):
-    role: str = Field(..., description="Message role (user, assistant, system)")
-    content: str = Field(..., description="Message content")
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessage] = Field(..., description="Conversation messages")
-    session_id: Optional[str] = Field(None, description="Session ID for persistence")
-    thread_id: Optional[str] = Field(None, description="Thread ID for multi-turn conversation")
-    stream: bool = Field(False, description="Enable streaming response")
-
-class ChatResponse(BaseModel):
-    messages: List[Dict[str, Any]]
-    session_id: str
-    thread_id: str
-    effective_year: int
-    timestamp: str
-
-class HealthResponse(BaseModel):
-    status: str
-    timestamp: str
-    agent_endpoint: str
-    version: str
-
-class SessionInfo(BaseModel):
-    session_id: str
-    user_name: str
-    started_at: str
-    last_activity_at: str
-    message_count: int
-
-# Authentication dependency
-async def get_current_user(request: Request) -> str:
-    """Extract and validate current user from request headers."""
-    if not ENABLE_AUTH:
-        return "anonymous"
-
-    # Extract user from Databricks request context
-    user = request.headers.get("X-Forwarded-User")
-    if not user:
-        # Fallback to workspace client
-        try:
-            user = w.current_user.me().user_name
-        except:
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-    # Check if user is allowed
-    if ALLOWED_USERS and user not in ALLOWED_USERS:
-        raise HTTPException(status_code=403, detail=f"User {user} not authorized")
-
-    return user
-
-def save_session(session_id: str, user_name: str, thread_id: Optional[str] = None):
-    """Save or update chat session in Delta Lake."""
-    now = datetime.now().isoformat()
-
-    spark.sql(f"""
-        MERGE INTO {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions AS target
-        USING (
-            SELECT
-                '{session_id}' AS session_id,
-                '{user_name}' AS user_name,
-                '{thread_id or ""}' AS thread_id,
-                CAST('{now}' AS TIMESTAMP) AS started_at,
-                CAST('{now}' AS TIMESTAMP) AS last_activity_at,
-                0 AS message_count
-        ) AS source
-        ON target.session_id = source.session_id
-        WHEN MATCHED THEN UPDATE SET
-            last_activity_at = source.last_activity_at,
-            message_count = target.message_count + 1
-        WHEN NOT MATCHED THEN INSERT *
-    """)
-
-def save_message(
-    session_id: str,
-    thread_id: Optional[str],
-    role: str,
-    content: str,
-    tool_calls: Optional[str] = None
-):
-    """Save chat message to Delta Lake."""
-    message_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
-
-    spark.sql(f"""
-        INSERT INTO {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
-        VALUES (
-            '{message_id}',
-            '{session_id}',
-            '{thread_id or ""}',
-            '{role}',
-            '{content.replace("'", "''")}',
-            CAST('{now}' AS TIMESTAMP),
-            NULL,
-            {f"'{tool_calls}'" if tool_calls else 'NULL'},
-            NULL
-        )
-    """)
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
-    return HealthResponse(
-        status="healthy",
-        timestamp=datetime.now().isoformat(),
-        agent_endpoint=AGENT_ENDPOINT,
-        version="1.0.0"
-    )
-
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "HEDIS Chat API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/health"
-    }
-
-@app.post("/chat")
-async def chat(
-    request: ChatRequest,
-    current_user: str = Depends(get_current_user)
-):
-    """
-    Chat endpoint - supports both streaming and non-streaming responses.
-
-    **Parameters:**
-    - messages: List of conversation messages
-    - session_id: Optional session ID (auto-generated if not provided)
-    - thread_id: Optional thread ID for multi-turn conversations
-    - stream: Enable streaming response (default: false)
-
-    **Returns:**
-    - ChatResponse with agent response and session information
-    """
-    try:
-        # Generate session ID if not provided
-        session_id = request.session_id or str(uuid.uuid4())
-
-        # Save session
-        save_session(session_id, current_user, request.thread_id)
-
-        # Convert messages to dict format
-        messages_dict = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-
-        # Save user message
-        if messages_dict:
-            last_user_msg = next((m for m in reversed(messages_dict) if m["role"] == "user"), None)
-            if last_user_msg:
-                save_message(session_id, request.thread_id, "user", last_user_msg["content"])
-
-        # Prepare request payload
-        payload = {"messages": messages_dict}
-        if request.thread_id:
-            payload["custom_inputs"] = {"thread_id": request.thread_id}
-
-        # Call agent endpoint
-        if request.stream:
-            # Streaming response
-            async def generate():
-                response = deploy_client.predict_stream(
-                    endpoint=AGENT_ENDPOINT,
-                    inputs=payload
-                )
-                for chunk in response:
-                    yield f"data: {json.dumps(chunk)}\\n\\n"
-                yield "data: [DONE]\\n\\n"
-
-            return StreamingResponse(generate(), media_type="text/event-stream")
-        else:
-            # Non-streaming response
-            response = deploy_client.predict(
-                endpoint=AGENT_ENDPOINT,
-                inputs=payload
-            )
-
-            # Extract response message
-            agent_message = response.get("messages", [])[-1] if response.get("messages") else {}
-            thread_id = response.get("custom_outputs", {}).get("thread_id", request.thread_id)
-            effective_year = response.get("custom_outputs", {}).get("effective_year", 2025)
-
-            # Save assistant message
-            if agent_message and agent_message.get("content"):
-                save_message(
-                    session_id,
-                    thread_id,
-                    "assistant",
-                    agent_message["content"],
-                    json.dumps(agent_message.get("tool_calls")) if agent_message.get("tool_calls") else None
-                )
-
-            return ChatResponse(
-                messages=response.get("messages", []),
-                session_id=session_id,
-                thread_id=thread_id or str(uuid.uuid4()),
-                effective_year=effective_year,
-                timestamp=datetime.now().isoformat()
-            )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
-
-@app.get("/sessions", response_model=List[SessionInfo])
-async def list_sessions(
-    current_user: str = Depends(get_current_user),
-    limit: int = 10
-):
-    """List recent chat sessions for the current user."""
-    try:
-        sessions = spark.sql(f"""
-            SELECT
-                session_id,
-                user_name,
-                started_at,
-                last_activity_at,
-                message_count
-            FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-            WHERE user_name = '{current_user}'
-            ORDER BY last_activity_at DESC
-            LIMIT {limit}
-        """).collect()
-
-        return [
-            SessionInfo(
-                session_id=row.session_id,
-                user_name=row.user_name,
-                started_at=row.started_at.isoformat(),
-                last_activity_at=row.last_activity_at.isoformat(),
-                message_count=row.message_count
-            )
-            for row in sessions
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing sessions: {str(e)}")
-
-@app.get("/sessions/{session_id}/messages")
-async def get_session_messages(
-    session_id: str,
-    current_user: str = Depends(get_current_user)
-):
-    """Retrieve all messages for a specific session."""
-    try:
-        # Verify session belongs to user
-        session = spark.sql(f"""
-            SELECT user_name
-            FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-            WHERE session_id = '{session_id}'
-        """).collect()
-
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        if ENABLE_AUTH and session[0].user_name != current_user:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-        # Get messages
-        messages = spark.sql(f"""
-            SELECT
-                message_id,
-                role,
-                content,
-                timestamp,
-                tool_calls
-            FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
-            WHERE session_id = '{session_id}'
-            ORDER BY timestamp ASC
-        """).collect()
-
-        return [
-            {
-                "message_id": row.message_id,
-                "role": row.role,
-                "content": row.content,
-                "timestamp": row.timestamp.isoformat(),
-                "tool_calls": json.loads(row.tool_calls) if row.tool_calls else None
-            }
-            for row in messages
-        ]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving messages: {str(e)}")
-
-@app.delete("/sessions/{session_id}")
-async def delete_session(
-    session_id: str,
-    current_user: str = Depends(get_current_user)
-):
-    """Delete a chat session and all its messages."""
-    try:
-        # Verify session belongs to user
-        session = spark.sql(f"""
-            SELECT user_name
-            FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-            WHERE session_id = '{session_id}'
-        """).collect()
-
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        if ENABLE_AUTH and session[0].user_name != current_user:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-        # Delete messages
-        spark.sql(f"""
-            DELETE FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
-            WHERE session_id = '{session_id}'
-        """)
-
-        # Delete session
-        spark.sql(f"""
-            DELETE FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-            WHERE session_id = '{session_id}'
-        """)
-
-        return {"status": "success", "message": f"Session {session_id} deleted"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")
-
-@app.get("/metrics")
-async def get_metrics(current_user: str = Depends(get_current_user)):
-    """Get usage metrics and statistics."""
-    try:
-        metrics = spark.sql(f"""
-            SELECT
-                COUNT(DISTINCT session_id) as total_sessions,
-                COUNT(*) as total_messages,
-                COUNT(DISTINCT user_name) as total_users,
-                MAX(last_activity_at) as latest_activity
-            FROM {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-        """).collect()[0]
-
-        return {
-            "total_sessions": metrics.total_sessions,
-            "total_messages": metrics.total_messages,
-            "total_users": metrics.total_users,
-            "latest_activity": metrics.latest_activity.isoformat() if metrics.latest_activity else None,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving metrics: {str(e)}")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-'''
-
-# Write the application code
-with open(app_dir / "main.py", "w") as f:
-    f.write(app_code)
-
-print(f"✅ FastAPI application created: {app_dir / 'main.py'}")
+for root, dirs, files in os.walk(app_dir):
+    level = root.replace(str(app_dir), '').count(os.sep)
+    indent = ' ' * 2 * level
+    print(f"{indent}{os.path.basename(root)}/")
+    subindent = ' ' * 2 * (level + 1)
+    for file in files:
+        if not file.endswith('.pyc') and not file.startswith('.'):
+            print(f"{subindent}{file}")
 
 # COMMAND ----------
 
@@ -605,7 +244,7 @@ print(f"✅ FastAPI application created: {app_dir / 'main.py'}")
 # Create app.yaml for Databricks Apps
 app_yaml = f'''# Databricks Apps configuration for HEDIS Chat FastAPI application
 name: {APP_NAME}
-description: "HEDIS Chat Agent - Conversational AI for HEDIS measure analysis"
+description: "HEDIS Chat Agent - Conversational AI for HEDIS measure analysis (Mock Mode)"
 
 # Application entry point
 command:
@@ -618,11 +257,32 @@ command:
 
 # Environment variables
 env:
+  # Mock mode enabled for testing with stub data
+  MOCK_MODE: "true"
+  DEBUG: "true"
+
+  # Databricks configuration (not used in mock mode but required for config)
   CATALOG_NAME: "{CATALOG_NAME}"
   SCHEMA_NAME: "{SCHEMA_NAME}"
   AGENT_ENDPOINT: "{AGENT_ENDPOINT}"
-  ENABLE_AUTH: "{'true' if ENABLE_AUTH else 'false'}"
-  ALLOWED_USERS: "{','.join(ALLOWED_USERS)}"
+  ENABLE_AUTH: "false"
+  ALLOWED_USERS: ""
+
+  # Application settings
+  APP_NAME: "HEDIS Chat API"
+  APP_VERSION: "1.0.0"
+  EFFECTIVE_YEAR: "2025"
+  HOST: "0.0.0.0"
+  PORT: "${{APP_PORT}}"
+
+  # CORS settings
+  CORS_ORIGINS: '["*"]'
+  CORS_CREDENTIALS: "true"
+  CORS_METHODS: '["*"]'
+  CORS_HEADERS: '["*"]'
+
+  # Postgres disabled for mock mode
+  POSTGRES_ENABLED: "false"
 
 # Resource configuration
 resources:
@@ -638,7 +298,7 @@ health_check:
 # Auto-scaling configuration
 scaling:
   min_instances: 1
-  max_instances: 5
+  max_instances: 3
   target_cpu_percent: 70
 '''
 
@@ -646,15 +306,32 @@ with open(repo_root / "app.yaml", "w") as f:
     f.write(app_yaml)
 
 print(f"✅ App configuration created: {repo_root / 'app.yaml'}")
+print(f"   MOCK_MODE=true - Application will use mock services")
 
 # Create requirements.txt for the app
-app_requirements = """fastapi>=0.115.0
+app_requirements = """# FastAPI and web framework
+fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.9
 httpx>=0.27.0
+
+# Data validation and settings
 pydantic>=2.10.0
+pydantic-settings>=2.6.0
+
+# Async file operations
+aiofiles>=24.1.0
+
+# Python utilities
+python-dotenv>=1.0.0
+
+# Date/time handling
+python-dateutil>=2.9.0
+
+# Databricks integration (optional in mock mode)
 mlflow[databricks]>=3.3.2
 databricks-sdk>=0.35.0
+pyspark>=3.5.0
 """
 
 with open(repo_root / "app" / "requirements.txt", "w") as f:
@@ -675,13 +352,15 @@ import subprocess
 import time
 import requests
 
-print("🧪 Starting local FastAPI server for testing...")
+print("🧪 Validating application for local testing...")
 
-# Set environment variables for local testing
+# Set environment variables for mock mode testing
+os.environ["MOCK_MODE"] = "true"
+os.environ["DEBUG"] = "true"
 os.environ["CATALOG_NAME"] = CATALOG_NAME
 os.environ["SCHEMA_NAME"] = SCHEMA_NAME
 os.environ["AGENT_ENDPOINT"] = AGENT_ENDPOINT
-os.environ["ENABLE_AUTH"] = "false"  # Disable auth for local testing
+os.environ["ENABLE_AUTH"] = "false"
 
 # Start server in background (will stop when cell completes)
 try:
@@ -691,10 +370,18 @@ try:
 
     # Quick validation - don't actually start server in notebook
     print("✅ Application code validated")
-    print("\nTo test locally, run:")
+    print("✅ Mock mode configuration set")
+    print("\n📋 To test locally with mock data:")
     print(f"  cd {repo_root}")
-    print(f"  uvicorn app.backend.main:app --reload --port 8000")
-    print("\nThen visit: http://localhost:8000/docs")
+    print(f"  python app/backend/run_mock.py")
+    print("\n   This will start the server at: http://localhost:8000")
+    print("   API docs available at: http://localhost:8000/api/docs")
+    print("   Health check: http://localhost:8000/health")
+    print("\n📊 Mock data includes:")
+    print("   • 2 sample chats (BCS measure, diabetes)")
+    print("   • Fake HEDIS measure responses")
+    print("   • Mock UC functions service")
+    print("   • In-memory chat history")
 
 except Exception as e:
     print(f"⚠️  Validation error: {e}")
@@ -716,6 +403,7 @@ except Exception as e:
 # COMMAND ----------
 
 print("🚀 Deploying FastAPI application to Databricks Apps...")
+print("   MODE: MOCK (with stub data for testing)")
 
 # Note: As of this writing, Databricks Apps deployment is typically done via:
 # 1. Databricks CLI: `databricks apps deploy`
@@ -725,7 +413,13 @@ print("🚀 Deploying FastAPI application to Databricks Apps...")
 print(f"""
 📋 Deployment Instructions:
 
-**Option 1: Using Databricks CLI**
+**IMPORTANT:** This deployment uses MOCK MODE with stub data.
+- No real Databricks agent or UC functions required
+- All responses are fake/stub data for testing
+- Chat history is in-memory (not persisted to Delta)
+- Perfect for testing the application structure before connecting real services
+
+**Option 1: Using Databricks CLI (Recommended)**
 ```bash
 # Install Databricks CLI
 pip install databricks-cli
@@ -733,7 +427,7 @@ pip install databricks-cli
 # Configure CLI
 databricks configure --token
 
-# Deploy app
+# Deploy app with mock data
 cd {repo_root}
 databricks apps deploy --source-dir . --app-name {APP_NAME}
 ```
@@ -742,11 +436,11 @@ databricks apps deploy --source-dir . --app-name {APP_NAME}
 1. Navigate to Databricks Workspace
 2. Go to 'Apps' section
 3. Click 'Create App'
-4. Upload application files:
-   - app/backend/main.py
+4. Upload entire application directory:
+   - app/backend/ (all files and subdirectories)
    - app.yaml
    - app/requirements.txt
-5. Configure environment variables
+5. The app.yaml already has MOCK_MODE=true configured
 6. Click 'Deploy'
 
 **Option 3: Using REST API**
@@ -759,18 +453,29 @@ w = WorkspaceClient()
 # Create app deployment
 app_deployment = w.apps.create(
     name="{APP_NAME}",
-    description="HEDIS Chat Agent FastAPI Application",
+    description="HEDIS Chat Agent FastAPI Application (Mock Mode)",
     # Additional configuration...
 )
 ```
 
 📁 Application Files Location:
+   - Backend Code: {app_dir}/ (entire directory)
    - Main App: {app_dir / 'main.py'}
    - Config: {repo_root / 'app.yaml'}
    - Requirements: {repo_root / 'app' / 'requirements.txt'}
 
+🧪 Mock Services Included:
+   - MockChatHistoryManager: In-memory chat storage with sample data
+   - MockAgentService: Fake HEDIS measure responses
+   - MockUCFunctionsService: Stub measure data
+
 🔗 After deployment, your app will be available at:
    https://{WORKSPACE_URL}/apps/{APP_NAME}
+
+💡 To switch to PRODUCTION mode later:
+   1. Edit app.yaml and change MOCK_MODE: "true" to MOCK_MODE: "false"
+   2. Ensure HEDIS agent and UC functions are deployed
+   3. Redeploy the app
 """)
 
 # Create a deployment script
@@ -1030,12 +735,18 @@ print(f"✅ Rollback script created: {repo_root / 'rollback_app.sh'}")
 
 print(f"""
 {'='*80}
-✅ HEDIS FastAPI APPLICATION DEPLOYMENT SETUP COMPLETE
+✅ HEDIS FastAPI APPLICATION DEPLOYMENT SETUP COMPLETE (MOCK MODE)
 {'='*80}
 
-📁 CREATED FILES:
-   ✓ FastAPI Application: {app_dir / 'main.py'}
-   ✓ App Configuration: {repo_root / 'app.yaml'}
+📁 USING EXISTING APPLICATION:
+   ✓ Backend Code: {app_dir}/ (complete application structure)
+   ✓ Main Application: {app_dir / 'main.py'}
+   ✓ Mock Services: {app_dir / 'services/mock_chat_history.py'}
+   ✓ Mock Agent: {app_dir / 'databricks/mock_agent_service.py'}
+   ✓ Mock UC Functions: {app_dir / 'databricks/mock_uc_functions.py'}
+
+📁 CREATED DEPLOYMENT FILES:
+   ✓ App Configuration: {repo_root / 'app.yaml'} (MOCK_MODE=true)
    ✓ App Requirements: {repo_root / 'app' / 'requirements.txt'}
    ✓ Deployment Script: {repo_root / 'deploy_app.sh'}
    ✓ Health Check Script: {repo_root / 'health_check.py'}
@@ -1046,14 +757,23 @@ print(f"""
    ✓ {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
    ✓ {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
    ✓ {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring (view)
+   ⚠️  Note: Tables created but NOT used in MOCK MODE
 
 ⚙️  CONFIGURATION:
-   • Catalog: {CATALOG_NAME}
-   • Schema: {SCHEMA_NAME}
+   • Mode: MOCK (stub data, no real services required)
+   • Catalog: {CATALOG_NAME} (not used in mock mode)
+   • Schema: {SCHEMA_NAME} (not used in mock mode)
    • App Name: {APP_NAME}
-   • Agent Endpoint: {AGENT_ENDPOINT}
-   • Authentication: {ENABLE_AUTH}
+   • Agent Endpoint: {AGENT_ENDPOINT} (not used in mock mode)
+   • Authentication: Disabled (mock mode)
    • Current User: {CURRENT_USER}
+
+🧪 MOCK MODE FEATURES:
+   • In-memory chat history with 2 sample conversations
+   • Fake HEDIS measure responses (BCS, COL, HBD, etc.)
+   • Stub UC functions service
+   • No Databricks dependencies required
+   • Perfect for testing application structure
 
 🚀 DEPLOYMENT STEPS:
 
@@ -1075,44 +795,71 @@ print(f"""
    https://{WORKSPACE_URL}/apps/{APP_NAME}
 
    API Documentation:
-   https://{WORKSPACE_URL}/apps/{APP_NAME}/docs
+   https://{WORKSPACE_URL}/apps/{APP_NAME}/api/docs
 
-4. MONITOR PERFORMANCE:
-   SELECT * FROM {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring
+   Health Check:
+   https://{WORKSPACE_URL}/apps/{APP_NAME}/health
+
+4. TEST WITH MOCK DATA:
+   The app includes pre-loaded sample conversations:
+   - Chat about BCS (Breast Cancer Screening) measure
+   - Chat about diabetes and HbD measure
+
+   All responses are fake/stub data for testing
+
+5. MONITOR PERFORMANCE:
+   GET /metrics endpoint (in-memory stats in mock mode)
+   Note: Delta tables exist but are not used in mock mode
 
 📚 API ENDPOINTS:
 
-   POST   /chat                      - Chat with HEDIS agent
+   POST   /api/chats                 - Create new chat or send message
+   POST   /api/chats/stream          - Stream chat responses
+   GET    /api/chats                 - List all chats
+   GET    /api/chats/{{id}}            - Get specific chat
+   DELETE /api/chats/{{id}}            - Delete chat
+   POST   /api/reviews               - Submit chat for review
+   GET    /api/reviews               - List reviews
+   GET    /api/reviews/{{id}}          - Get specific review
+   PATCH  /api/reviews/{{id}}          - Update review status
    GET    /health                    - Health check
-   GET    /sessions                  - List user sessions
-   GET    /sessions/{{id}}/messages    - Get session messages
-   DELETE /sessions/{{id}}             - Delete session
-   GET    /metrics                   - Usage metrics
-   GET    /docs                      - Interactive API docs
-   GET    /redoc                     - ReDoc API documentation
+   GET    /                          - API info
+   GET    /api/docs                  - Interactive API docs
+   GET    /api/redoc                 - ReDoc API documentation
 
 🔒 SECURITY:
-   • Authentication: {ENABLE_AUTH}
-   • Unity Catalog governance enabled
-   • Row-level security on Delta tables
-   • User isolation per session
+   • Authentication: Disabled (mock mode - enabled in production)
+   • CORS: Allow all origins (mock mode - restricted in production)
+   • No sensitive data in mock responses
+   • Safe for testing and development
 
 🔧 TESTING:
 
-   # Test chat endpoint
-   curl -X POST https://{WORKSPACE_URL}/apps/{APP_NAME}/chat \\
-     -H "Content-Type: application/json" \\
-     -d '{{"messages": [{{"role": "user", "content": "What is BCS measure?"}}]}}'
-
-   # Test health
+   # Test health endpoint
    curl https://{WORKSPACE_URL}/apps/{APP_NAME}/health
+
+   # Create a new chat
+   curl -X POST https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats \\
+     -H "Content-Type: application/json" \\
+     -d '{{"userId": "test-user", "context": {{"patient": "P123"}}, "title": "Test Chat"}}'
+
+   # Send a message to chat (will get mock response)
+   curl -X POST https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats \\
+     -H "Content-Type: application/json" \\
+     -d '{{"chatId": "chat_001", "content": "What is the BCS measure?"}}'
+
+   # List all chats
+   curl https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats
+
+   # Get specific chat with messages
+   curl https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats/chat_001
 
 📊 MONITORING:
 
-   • App health: /health endpoint
-   • Usage metrics: /metrics endpoint
-   • Delta Lake analytics: app_monitoring view
-   • Model Serving metrics: Databricks UI
+   • App health: /health endpoint (returns mock mode status)
+   • Usage metrics: In-memory statistics (not persisted)
+   • Logs: Available in Databricks Apps console
+   • Note: Delta Lake analytics disabled in mock mode
 
 🔄 ROLLBACK:
 
@@ -1122,12 +869,23 @@ print(f"""
 
 💡 NEXT STEPS:
 
-   1. Deploy the application using deployment script
-   2. Test all endpoints thoroughly
-   3. Set up monitoring dashboards
-   4. Configure alerts for health checks
-   5. Document for end users
-   6. Plan production rollout
+   1. ✅ Deploy the application in MOCK MODE (this notebook)
+   2. Test all API endpoints with mock data
+   3. Verify application structure and routing
+   4. Test frontend integration (if applicable)
+   5. Once validated, switch to PRODUCTION MODE:
+      - Deploy HEDIS agent to Model Serving
+      - Create Unity Catalog functions
+      - Update app.yaml: MOCK_MODE="false"
+      - Redeploy application
+
+🎯 WHY MOCK MODE FIRST?
+
+   • Test application structure without dependencies
+   • Validate API contracts and data models
+   • Verify deployment process works
+   • Debug issues without waiting for agent responses
+   • Safe testing environment before production
 
 🆘 SUPPORT:
 

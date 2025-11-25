@@ -2,13 +2,12 @@
 FastAPI Application Entry Point
 
 Main FastAPI application with CORS, middleware, and router configuration.
-Serves the HEDIS chat application on Databricks.
+Serves the HEDIS chat API backend.
 """
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import time
@@ -116,7 +115,8 @@ async def health_check():
         "app": settings.app_name,
         "version": settings.app_version,
         "catalog": f"{settings.uc_catalog}.{settings.uc_schema}",
-        "effective_year": settings.effective_year
+        "effective_year": settings.effective_year,
+        "mode": "mock" if settings.mock_mode else "production"
     }
 
 
