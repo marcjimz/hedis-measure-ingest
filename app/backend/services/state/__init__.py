@@ -85,13 +85,8 @@ from services.state.base import (
     PaginatedResponse,
 )
 
-# Concrete implementations
-from services.state.delta_table import (
-    DeltaTableStateManager,
-    CHATS_TABLE_SCHEMA,
-    MESSAGES_TABLE_SCHEMA,
-    REVIEWS_TABLE_SCHEMA,
-)
+# Concrete implementations - lazy loaded to avoid pyspark in mock mode
+# Use: from services.state.delta_table import DeltaTableStateManager
 
 
 __all__ = [
@@ -139,3 +134,20 @@ __all__ = [
 # Version information
 __version__ = "1.0.0"
 __author__ = "HEDIS Measure Ingest Team"
+
+
+def __getattr__(name):
+    """Lazy import for Delta Table implementations to avoid loading pyspark in mock mode."""
+    if name == "DeltaTableStateManager":
+        from services.state.delta_table import DeltaTableStateManager
+        return DeltaTableStateManager
+    elif name == "CHATS_TABLE_SCHEMA":
+        from services.state.delta_table import CHATS_TABLE_SCHEMA
+        return CHATS_TABLE_SCHEMA
+    elif name == "MESSAGES_TABLE_SCHEMA":
+        from services.state.delta_table import MESSAGES_TABLE_SCHEMA
+        return MESSAGES_TABLE_SCHEMA
+    elif name == "REVIEWS_TABLE_SCHEMA":
+        from services.state.delta_table import REVIEWS_TABLE_SCHEMA
+        return REVIEWS_TABLE_SCHEMA
+    raise AttributeError(f"module 'services.state' has no attribute '{name}'")
