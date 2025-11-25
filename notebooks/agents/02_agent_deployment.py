@@ -244,11 +244,12 @@ mlflow.set_registry_uri('databricks-uc')
 agent_path = "../../src/agents/hedis_chat.py"
 
 # Create agent configuration
+# This config is saved with the model and read by the agent at deployment time
 agent_config = {
     "endpoint_name": ENDPOINT_NAME,
     "catalog_name": CATALOG_NAME,
     "schema_name": SCHEMA_NAME,
-    "effective_year": agent.effective_year,
+    "effective_year": agent.effective_year,  # Used as default filter_year for measures_document_search
 }
 
 # Create resources list - includes serving endpoint and optionally Lakebase
@@ -386,12 +387,17 @@ envvars = {
     "UC_SCHEMA": SCHEMA_NAME,
 }
 
+# EFFECTIVE_YEAR can be set via env var (takes precedence) or model_config
+# Priority: ENV > model_config > auto-detect from database
 if EFFECTIVE_YEAR:
     envvars["EFFECTIVE_YEAR"] = str(EFFECTIVE_YEAR)
 
 print("Environment variables configured for deployment:")
 for key, value in envvars.items():
     print(f"   {key}: {value}")
+
+if agent.effective_year and "EFFECTIVE_YEAR" not in envvars:
+    print(f"   effective_year will be read from model_config: {agent.effective_year}")
 
 if ENABLE_PERSISTENCE:
     print(f"\nℹ️  Lakebase resource will be added to deployment:")

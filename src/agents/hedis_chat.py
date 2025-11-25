@@ -515,16 +515,55 @@ class HEDISChatAgentFactory:
     ]
 
     @staticmethod
-    def _get_latest_effective_year(catalog_name: str, schema_name: str) -> int:
+    def _wrap_search_tool(original_tool: BaseTool, default_year: int) -> BaseTool:
+        """
+        Wrap the measures_document_search tool to inject filter_year parameter.
+
+        Args:
+            original_tool: The original UC function tool
+            default_year: Default effective_year to use for filtering
+
+        Returns:
+            Wrapped tool that injects filter_year parameter
+        """
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel, Field
+
+        # Define input schema with filter_year having a default
+        class SearchInput(BaseModel):
+            search_query: str = Field(..., description="The search query text")
+            num_results: int = Field(5, description="Number of results to return")
+            filter_year: int = Field(default_year, description=f"Filter results by effective year (default: {default_year})")
+
+        def wrapped_search_func(search_query: str, num_results: int = 5, filter_year: int = default_year):
+            """Search HEDIS measure documents with automatic year filtering."""
+            # Call the original tool with all three parameters
+            return original_tool.invoke({
+                "search_query": search_query,
+                "num_results": num_results,
+                "filter_year": filter_year
+            })
+
+        # Create wrapped tool with the same name and description
+        return StructuredTool(
+            name=original_tool.name,
+            description=f"{original_tool.description} (automatically filters to year {default_year} unless specified)",
+            func=wrapped_search_func,
+            args_schema=SearchInput
+        )
+
+    @staticmethod
+    def _get_latest_effective_year(catalog_name: str, schema_name: str, fallback: Optional[int] = None) -> Optional[int]:
         """
         Query the database to get the latest effective_year from hedis_measures_definitions.
 
         Args:
             catalog_name: Unity Catalog catalog name
             schema_name: Unity Catalog schema name
+            fallback: Fallback value if query fails (optional)
 
         Returns:
-            Latest effective_year as integer, or 2025 if query fails
+            Latest effective_year as integer, or fallback if query fails, or None if no fallback
         """
         try:
             from pyspark.sql import SparkSession
@@ -540,7 +579,7 @@ class HEDISChatAgentFactory:
         except Exception as e:
             print(f"Warning: Could not auto-detect effective_year: {e}")
 
-        return 2025  # Fallback
+        return fallback  # Return fallback (could be None)
 
     @staticmethod
     def create(
@@ -576,13 +615,27 @@ class HEDISChatAgentFactory:
         if enable_persistence and not (conn_string or connection_pool):
             raise ValueError("Connection string or connection pool required when persistence is enabled")
 
-        # Auto-detect effective_year if not provided
-        if effective_year is None and catalog_name and schema_name:
-            effective_year = HEDISChatAgentFactory._get_latest_effective_year(catalog_name, schema_name)
-            print(f"Auto-detected effective_year: {effective_year}")
-        elif effective_year is None:
-            effective_year = 2025
-            print(f"Using default effective_year: {effective_year}")
+        # Determine effective_year
+        if effective_year is None:
+            # Try to auto-detect from database
+            if catalog_name and schema_name:
+                effective_year = HEDISChatAgentFactory._get_latest_effective_year(
+                    catalog_name, schema_name, fallback=None
+                )
+                if effective_year:
+                    print(f"Auto-detected effective_year: {effective_year}")
+
+            # If still None, raise error - must be configured
+            if effective_year is None:
+                raise ValueError(
+                    "effective_year must be specified either:\n"
+                    "  1. Via the effective_year parameter\n"
+                    "  2. Via EFFECTIVE_YEAR environment variable\n"
+                    "  3. Via model_config (for deployed agents)\n"
+                    "  4. Auto-detected from database (requires valid catalog/schema)"
+                )
+        else:
+            print(f"Using configured effective_year: {effective_year}")
 
         # Wire UC function client
         client = databricks_function_client or DatabricksFunctionClient()
@@ -603,10 +656,20 @@ class HEDISChatAgentFactory:
         uc_toolkit = UCFunctionToolkit(function_names=tool_names)
         tools = uc_toolkit.tools
 
+        # Wrap tools to inject effective_year for measures_document_search
+        wrapped_tools = []
+        for tool in tools:
+            if "measures_document_search" in tool.name:
+                # Wrap the tool to inject filter_year parameter
+                wrapped_tool = HEDISChatAgentFactory._wrap_search_tool(tool, effective_year)
+                wrapped_tools.append(wrapped_tool)
+            else:
+                wrapped_tools.append(tool)
+
         # Return agent
         return HEDISChatAgent(
             model=llm,
-            tools=tools,
+            tools=wrapped_tools,
             conn_string=conn_string,
             connection_pool=connection_pool,
             enable_persistence=enable_persistence,
@@ -652,18 +715,28 @@ class HEDISChatAgentFactory:
 endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
 catalog_name = os.getenv("UC_CATALOG", "main")
 schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
-effective_year_str = os.getenv("EFFECTIVE_YEAR")
-effective_year = int(effective_year_str) if effective_year_str else None
 
 # Try to read model_config for deployment configuration
 try:
     model_config = mlflow.models.ModelConfig(development_config="model_config.yaml")
     enable_persistence = model_config.get("enable_persistence", False)
     lakebase_instance = model_config.get("lakebase_instance")
+    # Read effective_year from model_config if available
+    config_effective_year = model_config.get("effective_year")
 except Exception:
     # Model config not available, use defaults
     enable_persistence = False
     lakebase_instance = None
+    config_effective_year = None
+
+# Determine effective_year priority: ENV > model_config > None (will auto-detect or error)
+effective_year_str = os.getenv("EFFECTIVE_YEAR")
+if effective_year_str:
+    effective_year = int(effective_year_str)
+elif config_effective_year:
+    effective_year = int(config_effective_year)
+else:
+    effective_year = None  # Will be auto-detected or raise error in factory
 
 # Get connection pool if persistence enabled
 # When deployed with DatabricksLakebase resource, use passthrough authentication
