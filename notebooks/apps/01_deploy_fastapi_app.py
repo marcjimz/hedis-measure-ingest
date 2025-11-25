@@ -274,28 +274,28 @@ print(f"   MOCK_MODE=true - Application will use mock services")
 
 # Create requirements.txt for the app
 app_requirements = """# FastAPI and web framework
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-python-multipart>=0.0.9
-httpx>=0.27.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.9
+httpx==0.27.0
 
 # Data validation and settings
-pydantic>=2.10.0
-pydantic-settings>=2.6.0
+pydantic==2.10.0
+pydantic-settings==2.6.0
 
 # Async file operations
-aiofiles>=24.1.0
+aiofiles==24.1.0
 
 # Python utilities
-python-dotenv>=1.0.0
+python-dotenv==1.0.0
 
 # Date/time handling
-python-dateutil>=2.9.0
+python-dateutil==2.9.0
 
 # Databricks integration (optional in mock mode)
-mlflow[databricks]>=3.3.2
-databricks-sdk>=0.35.0
-pyspark>=3.5.0
+mlflow[databricks]==3.3.2
+databricks-sdk==0.35.0
+pyspark==3.5.0
 """
 
 with open(repo_root / "app" / "requirements.txt", "w") as f:
