@@ -274,46 +274,61 @@ except Exception as e:
 
 # COMMAND ----------
 
-print(f"""
-🚀 Deployment Options:
+print(f"🚀 Deploying {APP_NAME} to Databricks Apps...")
 
-1. CLI: databricks apps deploy --source-dir . --app-name {APP_NAME}
-2. UI: Upload to Databricks Apps section
-3. Script: bash {repo_root / 'deploy_app.sh'}
+try:
+    from databricks.sdk.service.apps import App, AppDeployment, AppDeploymentMode, AppDeploymentStatus
 
-App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}
-""")
+    # Check if app already exists
+    existing_app = None
+    try:
+        existing_app = w.apps.get(name=APP_NAME)
+        print(f"✅ Found existing app: {APP_NAME}")
+        print(f"   Current status: {existing_app.status.state if existing_app.status else 'UNKNOWN'}")
+    except Exception:
+        print(f"📦 Creating new app: {APP_NAME}")
 
-# Create a deployment script
-deployment_script = f'''#!/bin/bash
-# HEDIS Chat FastAPI Deployment Script
+    # Deploy the app
+    print(f"📤 Deploying from source directory: {repo_root / 'app'}")
+    print(f"   Using configuration: {repo_root / 'app/app.yaml'}")
 
-set -e
+    # Start deployment using Databricks SDK
+    deployment = w.apps.deploy(
+        app_name=APP_NAME,
+        source_code_path=str(repo_root / "app")
+    )
 
-echo "🚀 Deploying HEDIS Chat FastAPI Application..."
+    print(f"✅ Deployment initiated!")
+    print(f"   App Name: {APP_NAME}")
+    print(f"   Status: {deployment.status.state if deployment.status else 'DEPLOYING'}")
 
-# Check if databricks CLI is installed
-if ! command -v databricks &> /dev/null; then
-    echo "❌ Databricks CLI not found. Installing..."
-    pip install databricks-cli
-fi
+    # Provide app URLs
+    app_url = f"https://{WORKSPACE_URL}/apps/{APP_NAME}"
+    docs_url = f"{app_url}/api/docs"
+    health_url = f"{app_url}/health"
 
-# Deploy app
-echo "📦 Deploying to Databricks Apps..."
-cd {repo_root}
-databricks apps deploy --source-dir . --app-name {APP_NAME}
+    print(f"\n🔗 App URLs (available after deployment completes):")
+    print(f"   Application: {app_url}")
+    print(f"   API Docs: {docs_url}")
+    print(f"   Health Check: {health_url}")
 
-echo "✅ Deployment complete!"
-echo "🔗 App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}"
-'''
+    print(f"\n📊 Monitor deployment status:")
+    print(f"   w.apps.get(name='{APP_NAME}')")
 
-with open(repo_root / "deploy_app.sh", "w") as f:
-    f.write(deployment_script)
+except ImportError as e:
+    print(f"⚠️  Databricks SDK Apps service not available: {e}")
+    print(f"   Falling back to CLI instructions...")
+    print(f"\n🚀 Deploy using Databricks CLI:")
+    print(f"   cd {repo_root}")
+    print(f"   databricks apps deploy --source-dir app --app-name {APP_NAME}")
+    print(f"\n🔗 App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}")
 
-os.chmod(repo_root / "deploy_app.sh", 0o755)
-
-print(f"\n✅ Deployment script created: {repo_root / 'deploy_app.sh'}")
-print(f"   Run: bash {repo_root / 'deploy_app.sh'")
+except Exception as e:
+    print(f"❌ Deployment error: {e}")
+    print(f"\n🚀 Alternative deployment methods:")
+    print(f"   1. CLI: databricks apps deploy --source-dir app --app-name {APP_NAME}")
+    print(f"   2. UI: Upload via Databricks Apps console")
+    print(f"\n🔗 App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}")
 
 # COMMAND ----------
 
@@ -542,9 +557,9 @@ print(f"""
 {'='*80}
 
 📁 FILES CREATED:
-   {repo_root / 'deploy_app.sh'}
    {repo_root / 'health_check.py'}
    {repo_root / 'ROLLBACK.md'}
+   {repo_root / 'rollback_app.sh'}
 
 📁 FILES VERIFIED:
    {repo_root / 'app/app.yaml'}
@@ -562,8 +577,9 @@ print(f"""
    Catalog: {CATALOG_NAME}
    Schema: {SCHEMA_NAME}
 
-🚀 DEPLOY:
-   bash {repo_root / 'deploy_app.sh'}
+🚀 DEPLOYMENT:
+   Application deployed using Databricks SDK (see Deploy cell above)
+   Monitor status: w.apps.get(name='{APP_NAME}')
 
 🔗 APP URL (after deployment):
    https://{WORKSPACE_URL}/apps/{APP_NAME}
