@@ -29,3 +29,9 @@ create_lakebase: "No"
 
 # Agent Configuration
 effective_year: "2025"  # Auto-detected if empty
+
+# FastAPI App Deployment Configuration
+app_name: "hedis-chat-app"
+agent_endpoint: "hedis_chat_agent"
+enable_auth: false
+allowed_users: ""  # Comma-separated list of allowed users, empty = all users allowed

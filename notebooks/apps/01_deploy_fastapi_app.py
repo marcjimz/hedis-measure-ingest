@@ -72,13 +72,13 @@ except FileNotFoundError:
     with open("/Workspace/Repos/hedis-measure-ingest/notebooks/config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-# Create configuration widgets with config values as defaults
+# Create configuration widgets with ALL values loaded from config.yaml
 dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog")
 dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema")
-dbutils.widgets.text("app_name", "hedis-chat-app", "App Name")
-dbutils.widgets.text("agent_endpoint", "hedis_chat_agent", "Agent Endpoint Name")
-dbutils.widgets.dropdown("enable_auth", "Yes", ["Yes", "No"], "Enable Authentication")
-dbutils.widgets.text("allowed_users", "", "Allowed Users (comma-separated, empty = all)")
+dbutils.widgets.text("app_name", config.get("app_name", "hedis-chat-app"), "App Name")
+dbutils.widgets.text("agent_endpoint", config.get("agent_endpoint", "hedis_chat_agent"), "Agent Endpoint Name")
+dbutils.widgets.dropdown("enable_auth", "Yes" if config.get("enable_auth", False) else "No", ["Yes", "No"], "Enable Authentication")
+dbutils.widgets.text("allowed_users", config.get("allowed_users", ""), "Allowed Users (comma-separated, empty = all)")
 
 # Get configuration from widgets
 CATALOG_NAME = dbutils.widgets.get("catalog_name")
