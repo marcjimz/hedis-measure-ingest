@@ -1,0 +1,58 @@
+# Databricks Apps configuration for HEDIS Chat FastAPI application
+name: hedis-chat-app
+description: "HEDIS Chat Agent - Conversational AI for HEDIS measure analysis"
+
+# Application entry point
+command:
+  - "uvicorn"
+  - "app.backend.main:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "${APP_PORT}"
+
+# Environment variables
+env:
+  # Mode configuration (set to "true" for mock mode, "false" for production)
+  MOCK_MODE: "true"
+  DEBUG: "true"
+
+  # Databricks configuration
+  CATALOG_NAME: "marcin_demo2"
+  SCHEMA_NAME: "hedis_measurements"
+  AGENT_ENDPOINT: "hedis_chat_agent"
+  ENABLE_AUTH: "false"
+  ALLOWED_USERS: ""
+
+  # Application settings
+  APP_NAME: "HEDIS Chat API"
+  APP_VERSION: "1.0.0"
+  EFFECTIVE_YEAR: "2025"
+  HOST: "0.0.0.0"
+  PORT: "${APP_PORT}"
+
+  # CORS settings
+  CORS_ORIGINS: '["*"]'
+  CORS_CREDENTIALS: "true"
+  CORS_METHODS: '["*"]'
+  CORS_HEADERS: '["*"]'
+
+  # Postgres configuration
+  POSTGRES_ENABLED: "false"
+
+# Resource configuration
+resources:
+  memory: "2Gi"
+  cpu: "1"
+
+# Health check configuration
+health_check:
+  path: "/health"
+  interval_seconds: 30
+  timeout_seconds: 5
+
+# Auto-scaling configuration
+scaling:
+  min_instances: 1
+  max_instances: 3
+  target_cpu_percent: 70

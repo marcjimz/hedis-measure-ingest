@@ -201,76 +201,17 @@ for root, dirs, files in os.walk(app_dir):
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 📝 Create App Configuration Files
+# MAGIC ## 📝 Verify App Configuration
 
 # COMMAND ----------
 
-# Create app.yaml for Databricks Apps
-app_yaml = f'''# Databricks Apps configuration for HEDIS Chat FastAPI application
-name: {APP_NAME}
-description: "HEDIS Chat Agent - Conversational AI for HEDIS measure analysis (Mock Mode)"
-
-# Application entry point
-command:
-  - "uvicorn"
-  - "app.backend.main:app"
-  - "--host"
-  - "0.0.0.0"
-  - "--port"
-  - "${{APP_PORT}}"
-
-# Environment variables
-env:
-  # Mock mode enabled for testing with stub data
-  MOCK_MODE: "true"
-  DEBUG: "true"
-
-  # Databricks configuration (not used in mock mode but required for config)
-  CATALOG_NAME: "{CATALOG_NAME}"
-  SCHEMA_NAME: "{SCHEMA_NAME}"
-  AGENT_ENDPOINT: "{AGENT_ENDPOINT}"
-  ENABLE_AUTH: "false"
-  ALLOWED_USERS: ""
-
-  # Application settings
-  APP_NAME: "HEDIS Chat API"
-  APP_VERSION: "1.0.0"
-  EFFECTIVE_YEAR: "2025"
-  HOST: "0.0.0.0"
-  PORT: "${{APP_PORT}}"
-
-  # CORS settings
-  CORS_ORIGINS: '["*"]'
-  CORS_CREDENTIALS: "true"
-  CORS_METHODS: '["*"]'
-  CORS_HEADERS: '["*"]'
-
-  # Postgres disabled for mock mode
-  POSTGRES_ENABLED: "false"
-
-# Resource configuration
-resources:
-  memory: "2Gi"
-  cpu: "1"
-
-# Health check configuration
-health_check:
-  path: "/health"
-  interval_seconds: 30
-  timeout_seconds: 5
-
-# Auto-scaling configuration
-scaling:
-  min_instances: 1
-  max_instances: 3
-  target_cpu_percent: 70
-'''
-
-with open(repo_root / "app.yaml", "w") as f:
-    f.write(app_yaml)
-
-print(f"✅ App configuration created: {repo_root / 'app.yaml'}")
-print(f"   MOCK_MODE=true - Application will use mock services")
+# Verify app.yaml exists
+app_yaml_path = repo_root / "app.yaml"
+if not app_yaml_path.exists():
+    print(f"❌ app.yaml not found at: {app_yaml_path}")
+    print(f"   Please create app.yaml in the repository root")
+else:
+    print(f"✅ App configuration found: {app_yaml_path}")
 
 # Create requirements.txt for the app
 app_requirements = """# FastAPI and web framework
@@ -623,11 +564,13 @@ print(f"""
 {'='*80}
 
 📁 FILES CREATED:
-   {repo_root / 'app.yaml'} (MOCK_MODE=true)
    {repo_root / 'app/requirements.txt'}
    {repo_root / 'deploy_app.sh'}
    {repo_root / 'health_check.py'}
    {repo_root / 'ROLLBACK.md'}
+
+📁 FILES VERIFIED:
+   {repo_root / 'app.yaml'}
 
 📊 DELTA TABLES:
    {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
