@@ -101,6 +101,8 @@ print(f"   Persistence: {ENABLE_PERSISTENCE}")
 if ENABLE_PERSISTENCE:
     print(f"   Lakebase Instance: {LAKEBASE_INSTANCE}")
 
+mlflow.autolog()
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -456,3 +458,7 @@ try:
 except Exception as e:
     print(f"❌ Error testing endpoint: {e}")
     raise e
+
+# COMMAND ----------
+
+
