@@ -1,7 +1,7 @@
 command:
   - /bin/sh
   - -c
-  - uvicorn main:app --host 0.0.0.0 --port ${APP_PORT}
+  - uvicorn main:app --host 0.0.0.0 --port $APP_PORT
 
 env:
   - name: MOCK_MODE
@@ -26,8 +26,6 @@ env:
     value: "2025"
   - name: HOST
     value: "0.0.0.0"
-  - name: PORT
-    value: ${APP_PORT}
   - name: CORS_ORIGINS
     value: '["*"]'
   - name: CORS_CREDENTIALS

@@ -1,14 +1,12 @@
 command:
   - /bin/sh
   - -c
-  - npm run build && npm start -- -p ${APP_PORT}
+  - npm run build && npm start -- -p $APP_PORT
 
 env:
   - name: NEXT_PUBLIC_API_URL
-    value: ${BACKEND_API_URL}
+    value: $BACKEND_API_URL
   - name: NODE_ENV
     value: production
-  - name: PORT
-    value: ${APP_PORT}
   - name: HOSTNAME
     value: 0.0.0.0
