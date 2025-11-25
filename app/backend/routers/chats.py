@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 import uuid
 
-from app.backend.models.chat import (
+from backend.models.chat import (
     Chat,
     ChatCreate,
     ChatUpdate,
@@ -22,7 +22,7 @@ from app.backend.models.chat import (
     Message,
     ChatStatus
 )
-from app.backend.config import settings
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,14 @@ router = APIRouter()
 # Initialize services based on mock mode
 if settings.mock_mode:
     logger.info("Using MOCK services for local development")
-    from app.backend.services.mock_chat_history import MockChatHistoryManager
-    from app.backend.databricks.mock_agent_service import MockAgentService
+    from backend.services.mock_chat_history import MockChatHistoryManager
+    from backend.databricks.mock_agent_service import MockAgentService
     chat_history = MockChatHistoryManager()
     agent_service = MockAgentService()
 else:
     logger.info("Using PRODUCTION services with Databricks")
-    from app.backend.services.delta_table_chat_history import DeltaTableChatHistoryManager
-    from app.backend.databricks.agent_service import AgentService
+    from backend.services.delta_table_chat_history import DeltaTableChatHistoryManager
+    from backend.databricks.agent_service import AgentService
     chat_history = DeltaTableChatHistoryManager()
     agent_service = AgentService()
 

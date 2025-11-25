@@ -6,7 +6,7 @@ Mock implementation that returns fake AI responses for local testing.
 
 import asyncio
 from typing import List, Dict, Any, Optional
-from app.backend.models.chat import Message
+from backend.models.chat import Message
 
 
 class MockAgentService:

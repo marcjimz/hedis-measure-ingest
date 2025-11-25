@@ -17,7 +17,7 @@ To create a new state management backend (e.g., LakebaseStateManager):
 1. Create a new file (e.g., lakebase.py) in this directory
 2. Import the abstract base class and models:
    ```python
-   from app.backend.services.state.base import (
+   from backend.services.state.base import (
        ChatHistoryStateManager,
        ChatModel,
        MessageModel,

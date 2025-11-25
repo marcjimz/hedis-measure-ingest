@@ -34,7 +34,7 @@ from pyspark.sql.types import (
 )
 from delta.tables import DeltaTable
 
-from app.backend.services.state.base import (
+from backend.services.state.base import (
     ChatHistoryStateManager,
     ChatCreate, ChatUpdate, ChatModel, ChatFilter,
     MessageCreate, MessageModel, MessageFilter,

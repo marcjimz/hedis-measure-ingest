@@ -10,7 +10,7 @@ Available Implementations:
 
 Quick Start:
 ```python
-from app.backend.services.state import (
+from backend.services.state import (
     DeltaTableStateManager,
     ChatCreate, MessageCreate, ReviewCreate,
     ChatStatus, MessageRole, ReviewStatus
@@ -52,7 +52,7 @@ Architecture:
 """
 
 # Abstract base and models
-from app.backend.services.state.base import (
+from backend.services.state.base import (
     # Abstract base class
     ChatHistoryStateManager,
 
@@ -86,7 +86,7 @@ from app.backend.services.state.base import (
 )
 
 # Concrete implementations
-from app.backend.services.state.delta_table import (
+from backend.services.state.delta_table import (
     DeltaTableStateManager,
     CHATS_TABLE_SCHEMA,
     MESSAGES_TABLE_SCHEMA,

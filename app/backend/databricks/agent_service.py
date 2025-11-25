@@ -12,8 +12,8 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 import uuid
 
-from app.backend.config import settings
-from app.backend.models.chat import Message
+from backend.config import settings
+from backend.models.chat import Message
 
 logger = logging.getLogger(__name__)
 
