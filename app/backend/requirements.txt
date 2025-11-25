@@ -1,0 +1,43 @@
+# FastAPI Backend Requirements for HEDIS Chat Application
+
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# HTTP and API
+requests==2.31.0
+httpx==0.26.0
+
+# CORS and Security
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Databricks Integration
+databricks-sdk==0.18.0
+databricks-langchain==0.1.2
+pyspark==3.5.0
+
+# MLflow and Agent Support
+mlflow==2.10.0
+langchain==0.1.0
+langchain-core==0.1.0
+langgraph==0.0.20
+
+# Database Support
+psycopg[binary]==3.1.16
+psycopg-pool==3.2.0
+
+# Logging and Monitoring
+python-json-logger==2.0.7
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+httpx==0.26.0
+
+# Development
+python-dotenv==1.0.0

@@ -53,6 +53,18 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.production
+.env.*.local
+
+# Next.js / Frontend
+app/frontend/.next/
+app/frontend/out/
+app/frontend/node_modules/
+app/frontend/.env.local
+app/frontend/.env.production
+app/frontend/pnpm-lock.yaml
+app/frontend/yarn.lock
+app/frontend/package-lock.json
 
 # Testing
 .pytest_cache/
