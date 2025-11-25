@@ -2,35 +2,7 @@
 # MAGIC %md
 # MAGIC # HEDIS FastAPI Application Deployment (Mock Mode)
 # MAGIC
-# MAGIC Deploy a FastAPI web application for the HEDIS Chat Agent on Databricks Apps.
-# MAGIC
-# MAGIC **⚠️ IMPORTANT: This notebook deploys the app in MOCK MODE**
-# MAGIC - Uses stub data and fake responses for testing
-# MAGIC - No real Databricks agent or UC functions required
-# MAGIC - Perfect for validating application structure before production
-# MAGIC
-# MAGIC **What This Notebook Does:**
-# MAGIC - Deploys the complete app/backend/ FastAPI application
-# MAGIC - Configures MOCK_MODE=true for testing with stub data
-# MAGIC - Sets up Delta tables (for future production use)
-# MAGIC - Creates deployment scripts and configuration
-# MAGIC - Provides health checks and monitoring setup
-# MAGIC - Includes rollback procedures
-# MAGIC
-# MAGIC **Tech Stack:**
-# MAGIC - 🚀 **FastAPI** - High-performance web framework
-# MAGIC - 🧪 **Mock Services** - In-memory chat history, fake HEDIS responses
-# MAGIC - 📊 **Delta Lake** - Tables created but not used in mock mode
-# MAGIC - 🏢 **Databricks Apps** - Serverless application hosting
-# MAGIC
-# MAGIC **Prerequisites for Mock Mode:**
-# MAGIC - ✅ app/backend/ directory with complete application code
-# MAGIC - ✅ Mock service files (automatically included)
-# MAGIC
-# MAGIC **Prerequisites for Production Mode (later):**
-# MAGIC - HEDIS infrastructure setup completed (run setup_infrastructure.py)
-# MAGIC - HEDIS agent deployed to Model Serving (run agents/02_agent_deployment.py)
-# MAGIC - Unity Catalog functions created (run agents/01_setup_uc_functions.py)
+# MAGIC Deploys app/backend/ FastAPI application with mock services for testing.
 
 # COMMAND ----------
 
@@ -106,9 +78,7 @@ if ALLOWED_USERS:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 📊 Create Delta Tables for Chat History
-# MAGIC
-# MAGIC Create tables to store chat sessions and messages for persistence and analytics.
+# MAGIC ## 📊 Create Delta Tables
 
 # COMMAND ----------
 
@@ -173,13 +143,7 @@ print(f"   Messages: {messages_count}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🚀 Create FastAPI Application
-# MAGIC
-# MAGIC Build the FastAPI application with endpoints for:
-# MAGIC - Chat completion (streaming and non-streaming)
-# MAGIC - Session management
-# MAGIC - Health checks
-# MAGIC - Metrics and monitoring
+# MAGIC ## 🚀 Verify FastAPI Application
 
 # COMMAND ----------
 
@@ -342,9 +306,7 @@ print(f"✅ App requirements created: {repo_root / 'app' / 'requirements.txt'}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🧪 Test FastAPI Application Locally
-# MAGIC
-# MAGIC Test the application locally before deploying to Databricks Apps.
+# MAGIC ## 🧪 Local Testing Instructions
 
 # COMMAND ----------
 
@@ -391,91 +353,17 @@ except Exception as e:
 
 # MAGIC %md
 # MAGIC ## 🚀 Deploy to Databricks Apps
-# MAGIC
-# MAGIC Deploy the FastAPI application to Databricks Apps infrastructure.
-# MAGIC
-# MAGIC **Note:** Databricks Apps provides:
-# MAGIC - Serverless hosting with auto-scaling
-# MAGIC - Built-in load balancing
-# MAGIC - HTTPS endpoints with authentication
-# MAGIC - Integration with Unity Catalog for governance
 
 # COMMAND ----------
 
-print("🚀 Deploying FastAPI application to Databricks Apps...")
-print("   MODE: MOCK (with stub data for testing)")
-
-# Note: As of this writing, Databricks Apps deployment is typically done via:
-# 1. Databricks CLI: `databricks apps deploy`
-# 2. Databricks Workspace UI: Apps section
-# 3. REST API: Apps API endpoints
-
 print(f"""
-📋 Deployment Instructions:
+🚀 Deployment Options:
 
-**IMPORTANT:** This deployment uses MOCK MODE with stub data.
-- No real Databricks agent or UC functions required
-- All responses are fake/stub data for testing
-- Chat history is in-memory (not persisted to Delta)
-- Perfect for testing the application structure before connecting real services
+1. CLI: databricks apps deploy --source-dir . --app-name {APP_NAME}
+2. UI: Upload to Databricks Apps section
+3. Script: bash {repo_root / 'deploy_app.sh'}
 
-**Option 1: Using Databricks CLI (Recommended)**
-```bash
-# Install Databricks CLI
-pip install databricks-cli
-
-# Configure CLI
-databricks configure --token
-
-# Deploy app with mock data
-cd {repo_root}
-databricks apps deploy --source-dir . --app-name {APP_NAME}
-```
-
-**Option 2: Using Workspace UI**
-1. Navigate to Databricks Workspace
-2. Go to 'Apps' section
-3. Click 'Create App'
-4. Upload entire application directory:
-   - app/backend/ (all files and subdirectories)
-   - app.yaml
-   - app/requirements.txt
-5. The app.yaml already has MOCK_MODE=true configured
-6. Click 'Deploy'
-
-**Option 3: Using REST API**
-```python
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.apps import App, AppDeployment
-
-w = WorkspaceClient()
-
-# Create app deployment
-app_deployment = w.apps.create(
-    name="{APP_NAME}",
-    description="HEDIS Chat Agent FastAPI Application (Mock Mode)",
-    # Additional configuration...
-)
-```
-
-📁 Application Files Location:
-   - Backend Code: {app_dir}/ (entire directory)
-   - Main App: {app_dir / 'main.py'}
-   - Config: {repo_root / 'app.yaml'}
-   - Requirements: {repo_root / 'app' / 'requirements.txt'}
-
-🧪 Mock Services Included:
-   - MockChatHistoryManager: In-memory chat storage with sample data
-   - MockAgentService: Fake HEDIS measure responses
-   - MockUCFunctionsService: Stub measure data
-
-🔗 After deployment, your app will be available at:
-   https://{WORKSPACE_URL}/apps/{APP_NAME}
-
-💡 To switch to PRODUCTION mode later:
-   1. Edit app.yaml and change MOCK_MODE: "true" to MOCK_MODE: "false"
-   2. Ensure HEDIS agent and UC functions are deployed
-   3. Redeploy the app
+App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}
 """)
 
 # Create a deployment script
@@ -513,8 +401,6 @@ print(f"   Run: bash {repo_root / 'deploy_app.sh'")
 
 # MAGIC %md
 # MAGIC ## 🔍 Health Check & Monitoring Setup
-# MAGIC
-# MAGIC Configure monitoring and alerting for the deployed application.
 
 # COMMAND ----------
 
@@ -611,8 +497,6 @@ print(f"SELECT * FROM {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring LIMIT 10")
 
 # MAGIC %md
 # MAGIC ## 🔄 Rollback Procedures
-# MAGIC
-# MAGIC Document and prepare rollback procedures in case of deployment issues.
 
 # COMMAND ----------
 
@@ -729,169 +613,39 @@ print(f"✅ Rollback script created: {repo_root / 'rollback_app.sh'}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 📋 Deployment Summary & Next Steps
+# MAGIC ## 📋 Deployment Summary
 
 # COMMAND ----------
 
 print(f"""
 {'='*80}
-✅ HEDIS FastAPI APPLICATION DEPLOYMENT SETUP COMPLETE (MOCK MODE)
+✅ DEPLOYMENT SETUP COMPLETE (MOCK MODE)
 {'='*80}
 
-📁 USING EXISTING APPLICATION:
-   ✓ Backend Code: {app_dir}/ (complete application structure)
-   ✓ Main Application: {app_dir / 'main.py'}
-   ✓ Mock Services: {app_dir / 'services/mock_chat_history.py'}
-   ✓ Mock Agent: {app_dir / 'databricks/mock_agent_service.py'}
-   ✓ Mock UC Functions: {app_dir / 'databricks/mock_uc_functions.py'}
+📁 FILES CREATED:
+   {repo_root / 'app.yaml'} (MOCK_MODE=true)
+   {repo_root / 'app/requirements.txt'}
+   {repo_root / 'deploy_app.sh'}
+   {repo_root / 'health_check.py'}
+   {repo_root / 'ROLLBACK.md'}
 
-📁 CREATED DEPLOYMENT FILES:
-   ✓ App Configuration: {repo_root / 'app.yaml'} (MOCK_MODE=true)
-   ✓ App Requirements: {repo_root / 'app' / 'requirements.txt'}
-   ✓ Deployment Script: {repo_root / 'deploy_app.sh'}
-   ✓ Health Check Script: {repo_root / 'health_check.py'}
-   ✓ Rollback Documentation: {repo_root / 'ROLLBACK.md'}
-   ✓ Rollback Script: {repo_root / 'rollback_app.sh'}
-
-📊 DELTA TABLES CREATED:
-   ✓ {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
-   ✓ {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
-   ✓ {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring (view)
-   ⚠️  Note: Tables created but NOT used in MOCK MODE
+📊 DELTA TABLES:
+   {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
+   {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages
+   {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring
 
 ⚙️  CONFIGURATION:
-   • Mode: MOCK (stub data, no real services required)
-   • Catalog: {CATALOG_NAME} (not used in mock mode)
-   • Schema: {SCHEMA_NAME} (not used in mock mode)
-   • App Name: {APP_NAME}
-   • Agent Endpoint: {AGENT_ENDPOINT} (not used in mock mode)
-   • Authentication: Disabled (mock mode)
-   • Current User: {CURRENT_USER}
+   Mode: MOCK
+   App Name: {APP_NAME}
+   Catalog: {CATALOG_NAME}
+   Schema: {SCHEMA_NAME}
 
-🧪 MOCK MODE FEATURES:
-   • In-memory chat history with 2 sample conversations
-   • Fake HEDIS measure responses (BCS, COL, HBD, etc.)
-   • Stub UC functions service
-   • No Databricks dependencies required
-   • Perfect for testing application structure
-
-🚀 DEPLOYMENT STEPS:
-
-1. DEPLOY THE APPLICATION:
+🚀 DEPLOY:
    bash {repo_root / 'deploy_app.sh'}
 
-   OR manually via Databricks CLI:
-   cd {repo_root}
-   databricks apps deploy --source-dir . --app-name {APP_NAME}
-
-2. VERIFY DEPLOYMENT:
-   # Check app status
-   databricks apps get {APP_NAME}
-
-   # Test health endpoint
-   python {repo_root / 'health_check.py'}
-
-3. ACCESS YOUR APP:
+🔗 APP URL (after deployment):
    https://{WORKSPACE_URL}/apps/{APP_NAME}
-
-   API Documentation:
    https://{WORKSPACE_URL}/apps/{APP_NAME}/api/docs
-
-   Health Check:
-   https://{WORKSPACE_URL}/apps/{APP_NAME}/health
-
-4. TEST WITH MOCK DATA:
-   The app includes pre-loaded sample conversations:
-   - Chat about BCS (Breast Cancer Screening) measure
-   - Chat about diabetes and HbD measure
-
-   All responses are fake/stub data for testing
-
-5. MONITOR PERFORMANCE:
-   GET /metrics endpoint (in-memory stats in mock mode)
-   Note: Delta tables exist but are not used in mock mode
-
-📚 API ENDPOINTS:
-
-   POST   /api/chats                 - Create new chat or send message
-   POST   /api/chats/stream          - Stream chat responses
-   GET    /api/chats                 - List all chats
-   GET    /api/chats/{{id}}            - Get specific chat
-   DELETE /api/chats/{{id}}            - Delete chat
-   POST   /api/reviews               - Submit chat for review
-   GET    /api/reviews               - List reviews
-   GET    /api/reviews/{{id}}          - Get specific review
-   PATCH  /api/reviews/{{id}}          - Update review status
-   GET    /health                    - Health check
-   GET    /                          - API info
-   GET    /api/docs                  - Interactive API docs
-   GET    /api/redoc                 - ReDoc API documentation
-
-🔒 SECURITY:
-   • Authentication: Disabled (mock mode - enabled in production)
-   • CORS: Allow all origins (mock mode - restricted in production)
-   • No sensitive data in mock responses
-   • Safe for testing and development
-
-🔧 TESTING:
-
-   # Test health endpoint
-   curl https://{WORKSPACE_URL}/apps/{APP_NAME}/health
-
-   # Create a new chat
-   curl -X POST https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats \\
-     -H "Content-Type: application/json" \\
-     -d '{{"userId": "test-user", "context": {{"patient": "P123"}}, "title": "Test Chat"}}'
-
-   # Send a message to chat (will get mock response)
-   curl -X POST https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats \\
-     -H "Content-Type: application/json" \\
-     -d '{{"chatId": "chat_001", "content": "What is the BCS measure?"}}'
-
-   # List all chats
-   curl https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats
-
-   # Get specific chat with messages
-   curl https://{WORKSPACE_URL}/apps/{APP_NAME}/api/chats/chat_001
-
-📊 MONITORING:
-
-   • App health: /health endpoint (returns mock mode status)
-   • Usage metrics: In-memory statistics (not persisted)
-   • Logs: Available in Databricks Apps console
-   • Note: Delta Lake analytics disabled in mock mode
-
-🔄 ROLLBACK:
-
-   If issues occur:
-   1. Read: {repo_root / 'ROLLBACK.md'}
-   2. Run: bash {repo_root / 'rollback_app.sh'}
-
-💡 NEXT STEPS:
-
-   1. ✅ Deploy the application in MOCK MODE (this notebook)
-   2. Test all API endpoints with mock data
-   3. Verify application structure and routing
-   4. Test frontend integration (if applicable)
-   5. Once validated, switch to PRODUCTION MODE:
-      - Deploy HEDIS agent to Model Serving
-      - Create Unity Catalog functions
-      - Update app.yaml: MOCK_MODE="false"
-      - Redeploy application
-
-🎯 WHY MOCK MODE FIRST?
-
-   • Test application structure without dependencies
-   • Validate API contracts and data models
-   • Verify deployment process works
-   • Debug issues without waiting for agent responses
-   • Safe testing environment before production
-
-🆘 SUPPORT:
-
-   • Documentation: /docs endpoint
-   • Logs: Databricks Apps console
-   • Issues: Contact {CURRENT_USER}
 
 {'='*80}
 """)
@@ -899,7 +653,7 @@ print(f"""
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 📖 Additional Resources
+# MAGIC ## 📖 Create README
 
 # COMMAND ----------
 
@@ -1120,6 +874,4 @@ print(f"✅ Application README created: {repo_root / 'app' / 'README.md'}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ✅ Deployment Complete
-# MAGIC
-# MAGIC Your FastAPI application is ready for deployment! Follow the instructions above to deploy to Databricks Apps.
+# MAGIC ## ✅ Ready to Deploy
