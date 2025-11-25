@@ -254,38 +254,9 @@ class HEDISChatAgent(ChatAgent):
 
         def call_model(state: MessagesState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
-            from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
+            from langchain_core.messages import SystemMessage
 
             messages_with_system = state["messages"]
-
-            # Filter out intermediate execution messages
-            # - Empty AIMessages (tool-calling steps with no content)
-            # - ToolMessages (tool execution results - already consumed by agent)
-            # This keeps only the user-agent conversation flow
-            filtered_messages = []
-            skipped_ai = 0
-            skipped_tool = 0
-            for msg in messages_with_system:
-                if isinstance(msg, AIMessage):
-                    content = getattr(msg, 'content', '')
-                    if content and content.strip():
-                        # Keep assistant messages with actual content (final responses)
-                        # Remove tool_calls for historical messages to avoid validation errors
-                        filtered_messages.append(AIMessage(content=content))
-                    else:
-                        # Skip empty assistant messages (intermediate tool-calling steps)
-                        skipped_ai += 1
-                elif isinstance(msg, ToolMessage):
-                    # Skip tool messages (intermediate execution results)
-                    skipped_tool += 1
-                else:
-                    # Keep user messages, system messages, etc.
-                    filtered_messages.append(msg)
-
-            if skipped_ai > 0 or skipped_tool > 0:
-                print(f"  🧹 Filtered out {skipped_ai} empty assistant + {skipped_tool} tool message(s) from history")
-
-            messages_with_system = filtered_messages
 
             # Prepend system prompt if not already present
             if system_prompt:
