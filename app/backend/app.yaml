@@ -5,7 +5,7 @@ description: "HEDIS Chat Backend API - FastAPI service for HEDIS measure analysi
 # Application entry point - Backend only
 command:
   - "uvicorn"
-  - "backend.main:app"
+  - "main:app"
   - "--host"
   - "0.0.0.0"
   - "--port"

@@ -10,7 +10,7 @@ from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 import uuid
 
-from backend.models.chat import Message
+from models.chat import Message
 
 
 # Enums for review status

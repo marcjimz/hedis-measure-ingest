@@ -8,7 +8,7 @@ Multiple implementations can be created (Delta Tables, PostgreSQL, etc.)
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from backend.models.chat import (
+from models.chat import (
     Message,
     Chat,
     ChatListItem,
@@ -18,7 +18,7 @@ from backend.models.chat import (
     ChatStatus,
     Pagination
 )
-from backend.models.review import Review, ReviewCreate, ReviewUpdate
+from models.review import Review, ReviewCreate, ReviewUpdate
 
 
 class ChatHistoryManager(ABC):

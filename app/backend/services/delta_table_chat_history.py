@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import logging
 
-from backend.services.chat_history_manager import ChatHistoryManager
-from backend.models.chat import (
+from services.chat_history_manager import ChatHistoryManager
+from models.chat import (
     Message,
     Chat,
     ChatListItem,
@@ -21,7 +21,7 @@ from backend.models.chat import (
     ChatStatus,
     Pagination
 )
-from backend.models.review import (
+from models.review import (
     Review,
     ReviewCreate,
     ReviewUpdate,
@@ -29,7 +29,7 @@ from backend.models.review import (
     ReviewListResponse,
     User
 )
-from backend.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

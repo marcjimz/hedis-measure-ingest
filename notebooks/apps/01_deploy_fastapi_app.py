@@ -270,11 +270,13 @@ while elapsed_time < max_wait_time:
             print(f"   Health: {backend_url}/health")
             print(f"   API Docs: {backend_url}/api/docs")
             break
-        elif state in ["FAILED", "ERROR"]:
+        elif state in ["FAILED", "ERROR", "CRASHED"]:
             error_msg = app_info.get("status", {}).get("message", "Unknown error")
             print(f"\n❌ Backend deployment failed")
+            print(f"   State: {state}")
             print(f"   Error: {error_msg}")
-            raise Exception(f"Backend deployment failed: {error_msg}")
+            print(f"\n💡 Debug: Check Compute > Apps > {BACKEND_APP_NAME} for logs")
+            raise Exception(f"Backend deployment failed with state {state}: {error_msg}")
 
     time.sleep(check_interval)
     elapsed_time += check_interval
@@ -402,11 +404,13 @@ while elapsed_time < max_wait_time:
             print(f"\n✅ Frontend is running!")
             print(f"   URL: {frontend_url}")
             break
-        elif state in ["FAILED", "ERROR"]:
+        elif state in ["FAILED", "ERROR", "CRASHED"]:
             error_msg = app_info.get("status", {}).get("message", "Unknown error")
             print(f"\n❌ Frontend deployment failed")
+            print(f"   State: {state}")
             print(f"   Error: {error_msg}")
-            raise Exception(f"Frontend deployment failed: {error_msg}")
+            print(f"\n💡 Debug: Check Compute > Apps > {FRONTEND_APP_NAME} for logs")
+            raise Exception(f"Frontend deployment failed with state {state}: {error_msg}")
 
     time.sleep(check_interval)
     elapsed_time += check_interval

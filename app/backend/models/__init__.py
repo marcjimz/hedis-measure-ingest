@@ -4,7 +4,7 @@ Pydantic Models Package
 Contains all request/response schemas for the API.
 """
 
-from backend.models.chat import (
+from models.chat import (
     Message,
     MessageCreate,
     Chat,
@@ -17,7 +17,7 @@ from backend.models.chat import (
     Pagination
 )
 
-from backend.models.review import (
+from models.review import (
     User,
     Review,
     ReviewCreate,

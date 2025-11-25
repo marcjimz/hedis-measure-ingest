@@ -11,7 +11,7 @@ Provides access to HEDIS-specific functions:
 import logging
 from typing import List, Dict, Any, Optional
 from pyspark.sql import SparkSession
-from backend.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

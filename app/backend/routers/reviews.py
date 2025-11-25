@@ -10,14 +10,14 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, status
 
-from backend.models.review import (
+from models.review import (
     Review,
     ReviewCreate,
     ReviewUpdate,
     ReviewListResponse,
     ReviewStatus
 )
-from backend.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,14 @@ router = APIRouter()
 # Initialize services based on mock mode
 if settings.mock_mode:
     logger.info("Using MOCK services for local development")
-    from backend.services.mock_chat_history import MockChatHistoryManager
-    from backend.databricks.mock_agent_service import MockAgentService
+    from services.mock_chat_history import MockChatHistoryManager
+    from databricks.mock_agent_service import MockAgentService
     chat_history = MockChatHistoryManager()
     agent_service = MockAgentService()
 else:
     logger.info("Using PRODUCTION services with Databricks")
-    from backend.services.delta_table_chat_history import DeltaTableChatHistoryManager
-    from backend.databricks.agent_service import AgentService
+    from services.delta_table_chat_history import DeltaTableChatHistoryManager
+    from databricks.agent_service import AgentService
     chat_history = DeltaTableChatHistoryManager()
     agent_service = AgentService()
 

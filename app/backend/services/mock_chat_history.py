@@ -9,7 +9,7 @@ import uuid
 from typing import Optional, List, Dict
 from datetime import datetime
 
-from backend.models.chat import (
+from models.chat import (
     Chat,
     ChatCreate,
     ChatUpdate,
@@ -19,7 +19,7 @@ from backend.models.chat import (
     Pagination,
     ChatStatus
 )
-from backend.models.review import (
+from models.review import (
     Review,
     ReviewCreate,
     ReviewUpdate,

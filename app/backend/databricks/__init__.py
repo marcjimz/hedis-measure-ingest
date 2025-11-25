@@ -7,8 +7,8 @@ Services for interacting with Databricks resources:
 - Agent deployments
 """
 
-from backend.databricks.uc_functions import UCFunctionsService
-from backend.databricks.agent_service import AgentService
+from databricks.uc_functions import UCFunctionsService
+from databricks.agent_service import AgentService
 
 __all__ = [
     "UCFunctionsService",

@@ -12,8 +12,8 @@ from fastapi.responses import JSONResponse
 import logging
 import time
 
-from backend.config import settings
-from backend.routers import chats, reviews
+from config import settings
+from routers import chats, reviews
 
 # Configure logging
 logging.basicConfig(
@@ -140,7 +140,7 @@ app.include_router(reviews.router, prefix="/api", tags=["Reviews"])
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "backend.main:app",
+        "main:app",
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
