@@ -49,11 +49,7 @@ from mlflow.types.agent import (
 )
 
 # Import HEDIS prompts
-try:
-    from src.agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
-except ImportError:
-    # Fallback for different import contexts
-    from agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
+from src.agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
 
 # Enable MLflow tracing for LangChain/LangGraph
 mlflow.autolog()
