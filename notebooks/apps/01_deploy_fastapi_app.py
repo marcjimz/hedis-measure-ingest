@@ -12,7 +12,6 @@
 # COMMAND ----------
 
 # MAGIC %pip install -q -r ../../requirements.txt
-# MAGIC %pip install -q fastapi uvicorn python-multipart httpx
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -102,7 +101,8 @@ USING DELTA
 COMMENT 'Chat session tracking for HEDIS FastAPI application'
 TBLPROPERTIES (
     'delta.enableChangeDataFeed' = 'true',
-    'delta.autoOptimize.optimizeWrite' = 'true'
+    'delta.autoOptimize.optimizeWrite' = 'true',
+    'delta.feature.allowColumnDefaults' = 'supported'
 )
 """)
 
