@@ -143,6 +143,33 @@ class HEDISChatAgent(ChatAgent):
 
         return result
 
+    def _extract_new_messages(self, all_messages: List) -> List[ChatAgentMessage]:
+        """
+        Extract only the new assistant response from the full conversation state.
+
+        In multi-turn conversations, the graph state contains all historical messages.
+        We only want to return the latest assistant response to the user.
+
+        Args:
+            all_messages: All messages from graph state
+
+        Returns:
+            List containing only the latest assistant message(s)
+        """
+        from langchain_core.messages import AIMessage
+
+        # Find the last assistant message with content
+        result = []
+        for msg in reversed(all_messages):
+            if isinstance(msg, AIMessage):
+                content = getattr(msg, 'content', '')
+                if content and content.strip():
+                    # Found the latest assistant response
+                    result.append(self._parse_message(msg))
+                    break
+
+        return result
+
     def _build_system_prompt(self) -> str:
         """
         Build the system prompt for the agent.
@@ -378,11 +405,8 @@ class HEDISChatAgent(ChatAgent):
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
                     result = agent.invoke({"messages": langchain_messages}, config)
 
-                    # Parse output messages
-                    out_messages = []
-                    if result.get("messages"):
-                        for msg in result["messages"]:
-                            out_messages.append(self._parse_message(msg))
+                    # Extract only the NEW messages (latest assistant response)
+                    out_messages = self._extract_new_messages(result.get("messages", []))
             else:
                 # Fall back to connection string (deprecated)
                 with Connection.connect(self.conn_string) as conn:
@@ -392,11 +416,8 @@ class HEDISChatAgent(ChatAgent):
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
                     result = agent.invoke({"messages": langchain_messages}, config)
 
-                    # Parse output messages
-                    out_messages = []
-                    if result.get("messages"):
-                        for msg in result["messages"]:
-                            out_messages.append(self._parse_message(msg))
+                    # Extract only the NEW messages (latest assistant response)
+                    out_messages = self._extract_new_messages(result.get("messages", []))
         else:
             # Non-persistent mode - no threading
             thread_id = thread_id or str(uuid.uuid4())
@@ -405,11 +426,8 @@ class HEDISChatAgent(ChatAgent):
             langchain_messages = self._convert_to_langchain_messages(messages)
             result = agent.invoke({"messages": langchain_messages})
 
-            # Parse output messages
-            out_messages = []
-            if result.get("messages"):
-                for msg in result["messages"]:
-                    out_messages.append(self._parse_message(msg))
+            # Extract only the NEW messages (latest assistant response)
+            out_messages = self._extract_new_messages(result.get("messages", []))
 
         # Build custom outputs
         custom_outputs = {
@@ -469,11 +487,17 @@ class HEDISChatAgent(ChatAgent):
 
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
-                        if chunk.get("messages"):
-                            for msg in chunk["messages"]:
-                                parsed_msg = self._parse_message(msg)
-                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
+                    # Use stream_mode="updates" to get only new messages, not full state
+                    for node_name, updates in agent.stream({"messages": langchain_messages}, config, stream_mode="updates"):
+                        if "messages" in updates:
+                            for msg in updates["messages"]:
+                                # Only stream assistant messages with content
+                                from langchain_core.messages import AIMessage
+                                if isinstance(msg, AIMessage):
+                                    content = getattr(msg, 'content', '')
+                                    if content and content.strip():
+                                        parsed_msg = self._parse_message(msg)
+                                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
             else:
                 # Fall back to connection string (deprecated)
                 with Connection.connect(self.conn_string) as conn:
@@ -482,11 +506,17 @@ class HEDISChatAgent(ChatAgent):
 
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
-                        if chunk.get("messages"):
-                            for msg in chunk["messages"]:
-                                parsed_msg = self._parse_message(msg)
-                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
+                    # Use stream_mode="updates" to get only new messages, not full state
+                    for node_name, updates in agent.stream({"messages": langchain_messages}, config, stream_mode="updates"):
+                        if "messages" in updates:
+                            for msg in updates["messages"]:
+                                # Only stream assistant messages with content
+                                from langchain_core.messages import AIMessage
+                                if isinstance(msg, AIMessage):
+                                    content = getattr(msg, 'content', '')
+                                    if content and content.strip():
+                                        parsed_msg = self._parse_message(msg)
+                                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
         else:
             # Non-persistent streaming
             thread_id = thread_id or str(uuid.uuid4())
@@ -494,11 +524,17 @@ class HEDISChatAgent(ChatAgent):
 
             langchain_messages = self._convert_to_langchain_messages(messages)
 
-            for chunk in agent.stream({"messages": langchain_messages}, stream_mode="values"):
-                if chunk.get("messages"):
-                    for msg in chunk["messages"]:
-                        parsed_msg = self._parse_message(msg)
-                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
+            # Use stream_mode="updates" to get only new messages
+            for node_name, updates in agent.stream({"messages": langchain_messages}, stream_mode="updates"):
+                if "messages" in updates:
+                    for msg in updates["messages"]:
+                        # Only stream assistant messages with content
+                        from langchain_core.messages import AIMessage
+                        if isinstance(msg, AIMessage):
+                            content = getattr(msg, 'content', '')
+                            if content and content.strip():
+                                parsed_msg = self._parse_message(msg)
+                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
 
         # Don't yield custom_outputs in streaming mode as it causes validation errors
         # Custom outputs can be retrieved from the final response if needed
