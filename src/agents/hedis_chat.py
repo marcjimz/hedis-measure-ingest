@@ -130,11 +130,9 @@ class HEDISChatAgent(ChatAgent):
             if role == "system":
                 result.append(SystemMessage(content=content))
             elif role == "assistant":
-                # AIMessage with optional tool calls
-                if tool_calls:
-                    result.append(AIMessage(content=content, tool_calls=tool_calls))
-                else:
-                    result.append(AIMessage(content=content))
+                # AIMessage - skip tool_calls for historical messages
+                # Tool calls have already been executed and including them can cause validation errors
+                result.append(AIMessage(content=content))
             elif role == "tool":
                 # ToolMessage needs tool_call_id
                 result.append(ToolMessage(content=content, tool_call_id=tool_call_id or str(uuid.uuid4()), name=name))
