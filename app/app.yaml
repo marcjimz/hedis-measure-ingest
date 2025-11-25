@@ -1,11 +1,11 @@
 # Backend FastAPI Application Configuration
-name: hedis-chat-backend
+name: hedis-chat-app
 description: "HEDIS Chat Agent Backend API"
 
 # Application entry point
 command:
   - "uvicorn"
-  - "app.backend.main:app"
+  - "backend.main:app"
   - "--host"
   - "0.0.0.0"
   - "--port"

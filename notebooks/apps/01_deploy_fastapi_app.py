@@ -323,9 +323,16 @@ try:
                 print(f"⚠️  Deployment still in progress after {max_wait}s")
                 print(f"   Proceeding with new deployment anyway...")
 
-    # Deploy the app
+    # Deploy the app - construct workspace path correctly
+    # Remove /Workspace prefix if present for API
+    workspace_path = str(repo_root / "app")
+    if workspace_path.startswith("/Workspace"):
+        workspace_path = workspace_path.replace("/Workspace", "", 1)
+
+    print(f"📂 Deploying from: {workspace_path}")
+
     deploy_url = f"{base_url}/apps/{APP_NAME}/deployments"
-    deploy_payload = {"source_code_path": str(repo_root / "app"), "mode": "SNAPSHOT"}
+    deploy_payload = {"source_code_path": workspace_path, "mode": "SNAPSHOT"}
     deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
 
     if deploy_response.status_code in [200, 201]:
