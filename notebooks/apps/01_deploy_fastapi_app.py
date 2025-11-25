@@ -324,10 +324,10 @@ try:
                 print(f"   Proceeding with new deployment anyway...")
 
     # Deploy the app - construct workspace path correctly
-    # Remove /Workspace prefix if present for API
+    # Ensure path starts with /Workspace/
     workspace_path = str(repo_root / "app")
-    if workspace_path.startswith("/Workspace"):
-        workspace_path = workspace_path.replace("/Workspace", "", 1)
+    if not workspace_path.startswith("/Workspace"):
+        workspace_path = f"/Workspace{workspace_path}"
 
     print(f"📂 Deploying from: {workspace_path}")
 
