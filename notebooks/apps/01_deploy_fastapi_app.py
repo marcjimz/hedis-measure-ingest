@@ -349,7 +349,7 @@ try:
     else:
         print(f"❌ Deployment failed: {deploy_response.status_code}")
         print(f"   {deploy_response.text}")
-        raise e
+        raise Exception("Deployment failed: %s" % deploy_response.text)
 
 except Exception as e:
     print(f"❌ Error: {e}")
