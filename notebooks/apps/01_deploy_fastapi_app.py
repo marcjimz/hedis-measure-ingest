@@ -211,24 +211,34 @@ try:
 
     print(f"📂 Deploying backend from: {backend_workspace_path}")
 
+    # Verify app.yaml exists in the source path
+    import json
+    print(f"\n📋 Deployment payload:")
+    print(f"   Source: {backend_workspace_path}")
+    print(f"   Mode: SNAPSHOT")
+    print(f"   Expected app.yaml at: {backend_workspace_path}/app.yaml")
+
     deploy_url = f"{base_url}/apps/{BACKEND_APP_NAME}/deployments"
     deploy_payload = {"source_code_path": backend_workspace_path, "mode": "SNAPSHOT"}
+
+    print(f"\n🚀 POSTing deployment request...")
     deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
+
+    print(f"   Response status: {deploy_response.status_code}")
 
     if deploy_response.status_code in [200, 201]:
         deployment_info = deploy_response.json()
-        print(f"✅ Backend deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
-
-        # Check status
-        time.sleep(3)
-        status_response = requests.get(get_url, headers=headers)
-        if status_response.status_code == 200:
-            app_info = status_response.json()
-            if app_info.get("status"):
-                print(f"   Status: {app_info['status'].get('state', 'UNKNOWN')}")
+        deployment_id = deployment_info.get('deployment_id', 'N/A')
+        print(f"✅ Backend deployment initiated")
+        print(f"   Deployment ID: {deployment_id}")
     else:
-        print(f"❌ Backend deployment failed: {deploy_response.status_code}")
-        print(f"   {deploy_response.text}")
+        print(f"❌ Backend deployment request failed: {deploy_response.status_code}")
+        print(f"   Response: {deploy_response.text}")
+        try:
+            error_details = deploy_response.json()
+            print(f"   Error details: {json.dumps(error_details, indent=2)}")
+        except:
+            pass
         raise Exception("Backend deployment failed: %s" % deploy_response.text)
 
 except Exception as e:
@@ -244,44 +254,73 @@ except Exception as e:
 
 # COMMAND ----------
 
-print(f"⏳ Waiting for backend to be RUNNING...\n")
+print(f"⏳ Waiting for backend deployment to complete...\n")
 print(f"   This may take 5-10 minutes for initial deployment\n")
 
 max_wait_time = 900  # 15 minutes
-check_interval = 30  # 30 seconds
+check_interval = 15  # 15 seconds
 elapsed_time = 0
 
 backend_url = None
-get_url = f"{base_url}/apps/{BACKEND_APP_NAME}"
 
 while elapsed_time < max_wait_time:
-    status_response = requests.get(get_url, headers=headers)
+    # Get app info including active deployment
+    app_url = f"{base_url}/apps/{BACKEND_APP_NAME}"
+    app_response = requests.get(app_url, headers=headers)
 
-    if status_response.status_code == 200:
-        app_info = status_response.json()
-        state = app_info.get("status", {}).get("state", "UNKNOWN")
+    if app_response.status_code == 200:
+        app_info = app_response.json()
 
-        print(f"   [{elapsed_time}s] Backend status: {state}")
+        # Check deployment status
+        active_deployment = app_info.get("active_deployment")
+        pending_deployment = app_info.get("pending_deployment")
 
-        if state == "RUNNING":
-            backend_url = app_info.get("url")
-            print(f"\n✅ Backend is running!")
-            print(f"   URL: {backend_url}")
-            print(f"   Health: {backend_url}/health")
-            print(f"   API Docs: {backend_url}/api/docs")
-            break
-        elif state in ["FAILED", "ERROR", "CRASHED"]:
-            error_msg = app_info.get("status", {}).get("message", "Unknown error")
-            print(f"\n❌ Backend deployment failed")
-            print(f"   State: {state}")
-            print(f"   Error: {error_msg}")
-            print(f"\n💡 Debug: Check Compute > Apps > {BACKEND_APP_NAME} for logs")
-            raise Exception(f"Backend deployment failed with state {state}: {error_msg}")
+        # Get the most recent deployment to check
+        deployment_to_check = pending_deployment or active_deployment
+
+        if deployment_to_check:
+            deployment_id = deployment_to_check.get("deployment_id", "N/A")
+
+            # Get detailed deployment status
+            deployment_url = f"{base_url}/apps/{BACKEND_APP_NAME}/deployments/{deployment_id}"
+            deploy_response = requests.get(deployment_url, headers=headers)
+
+            if deploy_response.status_code == 200:
+                deploy_info = deploy_response.json()
+                deploy_state = deploy_info.get("status", {}).get("state", "UNKNOWN")
+                deploy_msg = deploy_info.get("status", {}).get("message", "")
+
+                print(f"   [{elapsed_time}s] Deployment state: {deploy_state}")
+                if deploy_msg:
+                    print(f"              Message: {deploy_msg}")
+
+                if deploy_state == "SUCCEEDED":
+                    # Deployment succeeded, now check if app is running
+                    app_state = app_info.get("status", {}).get("state", "UNKNOWN")
+                    if app_state == "RUNNING":
+                        backend_url = app_info.get("url")
+                        print(f"\n✅ Backend deployment SUCCEEDED and app is RUNNING!")
+                        print(f"   URL: {backend_url}")
+                        print(f"   Health: {backend_url}/health")
+                        print(f"   API Docs: {backend_url}/api/docs")
+                        break
+                    else:
+                        print(f"              App state: {app_state} (waiting for RUNNING...)")
+
+                elif deploy_state in ["FAILED", "CANCELLED"]:
+                    print(f"\n❌ Backend deployment FAILED")
+                    print(f"   Deployment ID: {deployment_id}")
+                    print(f"   State: {deploy_state}")
+                    print(f"   Message: {deploy_msg}")
+                    print(f"\n💡 Debug: Check Compute > Apps > {BACKEND_APP_NAME} > Deployments for detailed logs")
+                    raise Exception(f"Backend deployment failed with state {deploy_state}: {deploy_msg}")
+        else:
+            print(f"   [{elapsed_time}s] No deployment information available yet...")
 
     time.sleep(check_interval)
     elapsed_time += check_interval
 else:
-    raise TimeoutError(f"Backend did not start within {max_wait_time} seconds")
+    raise TimeoutError(f"Backend deployment did not complete within {max_wait_time} seconds")
 
 # COMMAND ----------
 
@@ -354,15 +393,9 @@ try:
 
     if deploy_response_frontend.status_code in [200, 201]:
         deployment_info = deploy_response_frontend.json()
-        print(f"✅ Frontend deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
-
-        # Check status
-        time.sleep(3)
-        status_response = requests.get(get_url_frontend, headers=headers)
-        if status_response.status_code == 200:
-            app_info = status_response.json()
-            if app_info.get("status"):
-                print(f"   Status: {app_info['status'].get('state', 'UNKNOWN')}")
+        frontend_deployment_id = deployment_info.get('deployment_id', 'N/A')
+        print(f"✅ Frontend deployment initiated")
+        print(f"   Deployment ID: {frontend_deployment_id}")
     else:
         print(f"❌ Frontend deployment failed: {deploy_response_frontend.status_code}")
         print(f"   {deploy_response_frontend.text}")
@@ -379,43 +412,72 @@ except Exception as e:
 
 # COMMAND ----------
 
-print(f"⏳ Waiting for frontend to be RUNNING...\n")
+print(f"⏳ Waiting for frontend deployment to complete...\n")
 print(f"   This may take 5-10 minutes for initial deployment\n")
 print(f"   Frontend needs to build the Next.js app first\n")
 
 max_wait_time = 900  # 15 minutes
-check_interval = 30  # 30 seconds
+check_interval = 15  # 15 seconds
 elapsed_time = 0
 
 frontend_url = None
-get_url_frontend = f"{base_url}/apps/{FRONTEND_APP_NAME}"
 
 while elapsed_time < max_wait_time:
-    status_response = requests.get(get_url_frontend, headers=headers)
+    # Get app info including active deployment
+    app_url = f"{base_url}/apps/{FRONTEND_APP_NAME}"
+    app_response = requests.get(app_url, headers=headers)
 
-    if status_response.status_code == 200:
-        app_info = status_response.json()
-        state = app_info.get("status", {}).get("state", "UNKNOWN")
+    if app_response.status_code == 200:
+        app_info = app_response.json()
 
-        print(f"   [{elapsed_time}s] Frontend status: {state}")
+        # Check deployment status
+        active_deployment = app_info.get("active_deployment")
+        pending_deployment = app_info.get("pending_deployment")
 
-        if state == "RUNNING":
-            frontend_url = app_info.get("url")
-            print(f"\n✅ Frontend is running!")
-            print(f"   URL: {frontend_url}")
-            break
-        elif state in ["FAILED", "ERROR", "CRASHED"]:
-            error_msg = app_info.get("status", {}).get("message", "Unknown error")
-            print(f"\n❌ Frontend deployment failed")
-            print(f"   State: {state}")
-            print(f"   Error: {error_msg}")
-            print(f"\n💡 Debug: Check Compute > Apps > {FRONTEND_APP_NAME} for logs")
-            raise Exception(f"Frontend deployment failed with state {state}: {error_msg}")
+        # Get the most recent deployment to check
+        deployment_to_check = pending_deployment or active_deployment
+
+        if deployment_to_check:
+            deployment_id = deployment_to_check.get("deployment_id", "N/A")
+
+            # Get detailed deployment status
+            deployment_url = f"{base_url}/apps/{FRONTEND_APP_NAME}/deployments/{deployment_id}"
+            deploy_response = requests.get(deployment_url, headers=headers)
+
+            if deploy_response.status_code == 200:
+                deploy_info = deploy_response.json()
+                deploy_state = deploy_info.get("status", {}).get("state", "UNKNOWN")
+                deploy_msg = deploy_info.get("status", {}).get("message", "")
+
+                print(f"   [{elapsed_time}s] Deployment state: {deploy_state}")
+                if deploy_msg:
+                    print(f"              Message: {deploy_msg}")
+
+                if deploy_state == "SUCCEEDED":
+                    # Deployment succeeded, now check if app is running
+                    app_state = app_info.get("status", {}).get("state", "UNKNOWN")
+                    if app_state == "RUNNING":
+                        frontend_url = app_info.get("url")
+                        print(f"\n✅ Frontend deployment SUCCEEDED and app is RUNNING!")
+                        print(f"   URL: {frontend_url}")
+                        break
+                    else:
+                        print(f"              App state: {app_state} (waiting for RUNNING...)")
+
+                elif deploy_state in ["FAILED", "CANCELLED"]:
+                    print(f"\n❌ Frontend deployment FAILED")
+                    print(f"   Deployment ID: {deployment_id}")
+                    print(f"   State: {deploy_state}")
+                    print(f"   Message: {deploy_msg}")
+                    print(f"\n💡 Debug: Check Compute > Apps > {FRONTEND_APP_NAME} > Deployments for detailed logs")
+                    raise Exception(f"Frontend deployment failed with state {deploy_state}: {deploy_msg}")
+        else:
+            print(f"   [{elapsed_time}s] No deployment information available yet...")
 
     time.sleep(check_interval)
     elapsed_time += check_interval
 else:
-    raise TimeoutError(f"Frontend did not start within {max_wait_time} seconds")
+    raise TimeoutError(f"Frontend deployment did not complete within {max_wait_time} seconds")
 
 # COMMAND ----------
 

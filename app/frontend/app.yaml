@@ -1,40 +1,14 @@
-# Databricks Apps configuration for HEDIS Chat Frontend UI
-name: hedis-chat-frontend
-description: "HEDIS Chat Frontend - Next.js UI for HEDIS measure analysis"
-
-# Application entry point - Frontend Next.js server
 command:
-  - "/bin/sh"
-  - "-c"
-  - "npm run build && npm start -- --port ${APP_PORT}"
+  - /bin/sh
+  - -c
+  - npm run build && npm start -- --port ${APP_PORT}
 
-# Environment variables
 env:
-  # Backend API URL - This should be set to the backend app URL after deployment
-  # Format: https://your-workspace.cloud.databricks.com/apps/<backend-app-id>
-  NEXT_PUBLIC_API_URL: "${BACKEND_API_URL}"
-
-  # Node environment
-  NODE_ENV: "production"
-
-  # Next.js configuration
-  PORT: "${APP_PORT}"
-  HOSTNAME: "0.0.0.0"
-
-# Resource configuration
-resources:
-  memory: "2Gi"
-  cpu: "1"
-
-# Health check configuration - Next.js doesn't have a default health endpoint
-# We'll check the root page instead
-health_check:
-  path: "/"
-  interval_seconds: 30
-  timeout_seconds: 10
-
-# Auto-scaling configuration
-scaling:
-  min_instances: 1
-  max_instances: 3
-  target_cpu_percent: 70
+  - name: NEXT_PUBLIC_API_URL
+    value: ${BACKEND_API_URL}
+  - name: NODE_ENV
+    value: production
+  - name: PORT
+    value: ${APP_PORT}
+  - name: HOSTNAME
+    value: 0.0.0.0
