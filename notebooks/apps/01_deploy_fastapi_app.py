@@ -205,44 +205,21 @@ for root, dirs, files in os.walk(app_dir):
 
 # COMMAND ----------
 
-# Verify app.yaml exists
-app_yaml_path = repo_root / "app.yaml"
+# Verify app configuration files exist
+app_yaml_path = repo_root / "app" / "app.yaml"
+requirements_path = repo_root / "app" / "requirements.txt"
+
 if not app_yaml_path.exists():
     print(f"❌ app.yaml not found at: {app_yaml_path}")
-    print(f"   Please create app.yaml in the repository root")
+    print(f"   Please create app/app.yaml for backend app configuration")
 else:
     print(f"✅ App configuration found: {app_yaml_path}")
 
-# Create requirements.txt for the app
-app_requirements = """# FastAPI and web framework
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-python-multipart==0.0.9
-httpx==0.27.0
-
-# Data validation and settings
-pydantic==2.10.0
-pydantic-settings==2.6.0
-
-# Async file operations
-aiofiles==24.1.0
-
-# Python utilities
-python-dotenv==1.0.0
-
-# Date/time handling
-python-dateutil==2.9.0
-
-# Databricks integration (optional in mock mode)
-mlflow[databricks]==3.3.2
-databricks-sdk==0.35.0
-pyspark==3.5.0
-"""
-
-with open(repo_root / "app" / "requirements.txt", "w") as f:
-    f.write(app_requirements)
-
-print(f"✅ App requirements created: {repo_root / 'app' / 'requirements.txt'}")
+if not requirements_path.exists():
+    print(f"❌ requirements.txt not found at: {requirements_path}")
+    print(f"   Please create app/requirements.txt for backend dependencies")
+else:
+    print(f"✅ App requirements found: {requirements_path}")
 
 # COMMAND ----------
 
@@ -514,7 +491,8 @@ DESCRIBE HISTORY {CATALOG_NAME}.{SCHEMA_NAME}.chat_messages;
 ## Backup Locations
 
 - Application Code: {app_dir / 'main.py'}
-- Configuration: {repo_root / 'app.yaml'}
+- Configuration: {repo_root / 'app/app.yaml'}
+- Requirements: {repo_root / 'app/requirements.txt'}
 - Delta Tables: {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions, chat_messages
 '''
 
@@ -564,13 +542,14 @@ print(f"""
 {'='*80}
 
 📁 FILES CREATED:
-   {repo_root / 'app/requirements.txt'}
    {repo_root / 'deploy_app.sh'}
    {repo_root / 'health_check.py'}
    {repo_root / 'ROLLBACK.md'}
 
 📁 FILES VERIFIED:
-   {repo_root / 'app.yaml'}
+   {repo_root / 'app/app.yaml'}
+   {repo_root / 'app/requirements.txt'}
+   {repo_root / 'app/backend/'} (application code)
 
 📊 DELTA TABLES:
    {CATALOG_NAME}.{SCHEMA_NAME}.chat_sessions
