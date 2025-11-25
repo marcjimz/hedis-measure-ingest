@@ -130,9 +130,10 @@ class HEDISChatAgent(ChatAgent):
             if role == "system":
                 result.append(SystemMessage(content=content))
             elif role == "assistant":
-                # AIMessage - skip tool_calls for historical messages
-                # Tool calls have already been executed and including them can cause validation errors
-                result.append(AIMessage(content=content))
+                # Skip assistant messages with empty content (these are intermediate tool-calling steps)
+                # LLM APIs require all messages to have non-empty content
+                if content and content.strip():
+                    result.append(AIMessage(content=content))
             elif role == "tool":
                 # ToolMessage needs tool_call_id
                 result.append(ToolMessage(content=content, tool_call_id=tool_call_id or str(uuid.uuid4()), name=name))
@@ -252,9 +253,33 @@ class HEDISChatAgent(ChatAgent):
 
         def call_model(state: MessagesState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
-            from langchain_core.messages import SystemMessage
+            from langchain_core.messages import SystemMessage, AIMessage
 
             messages_with_system = state["messages"]
+
+            # Filter out intermediate assistant messages with empty content
+            # These are created when the agent makes tool calls but hasn't responded yet
+            # LLM APIs require all messages to have non-empty content
+            filtered_messages = []
+            skipped_count = 0
+            for msg in messages_with_system:
+                # Skip AIMessages with empty content (intermediate tool-calling steps)
+                if isinstance(msg, AIMessage):
+                    content = getattr(msg, 'content', '')
+                    if content and content.strip():
+                        # Keep messages with actual content, but remove tool_calls for historical messages
+                        filtered_messages.append(AIMessage(content=content))
+                    else:
+                        # Skip empty assistant message
+                        skipped_count += 1
+                else:
+                    # Keep all non-assistant messages as-is
+                    filtered_messages.append(msg)
+
+            if skipped_count > 0:
+                print(f"  🧹 Filtered out {skipped_count} empty assistant message(s) from history")
+
+            messages_with_system = filtered_messages
 
             # Prepend system prompt if not already present
             if system_prompt:
