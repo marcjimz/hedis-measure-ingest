@@ -283,20 +283,30 @@ try:
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     base_url = f"https://{WORKSPACE_URL}/api/2.0"
 
-    # Deploy the app using REST API
+    # Check if app exists, create if it doesn't
+    get_url = f"{base_url}/apps/{APP_NAME}"
+    get_response = requests.get(get_url, headers=headers)
+
+    if get_response.status_code == 404:
+        # Create the app first
+        create_payload = {"name": APP_NAME}
+        create_response = requests.post(f"{base_url}/apps", headers=headers, json=create_payload)
+        if create_response.status_code not in [200, 201]:
+            raise Exception(f"Failed to create app: {create_response.text}")
+        print(f"✅ App created: {APP_NAME}")
+
+    # Deploy the app
     deploy_url = f"{base_url}/apps/{APP_NAME}/deployments"
     deploy_payload = {"source_code_path": str(repo_root / "app"), "mode": "SNAPSHOT"}
-
     deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
 
     if deploy_response.status_code in [200, 201]:
         deployment_info = deploy_response.json()
-        print(f"✅ Deployment initiated: {APP_NAME}")
-        print(f"   Deployment ID: {deployment_info.get('deployment_id', 'N/A')}")
+        print(f"✅ Deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
 
-        # Check status after brief wait
+        # Check status
         time.sleep(3)
-        status_response = requests.get(f"{base_url}/apps/{APP_NAME}", headers=headers)
+        status_response = requests.get(get_url, headers=headers)
         if status_response.status_code == 200:
             app_info = status_response.json()
             if app_info.get("status"):
@@ -307,10 +317,8 @@ try:
 
 except Exception as e:
     print(f"❌ Error: {e}")
-    print(f"   Fallback: databricks apps deploy --source-dir app --app-name {APP_NAME}")
 
-# Display app URL
-print(f"\n🔗 {WORKSPACE_URL}/apps/{APP_NAME}")
+print(f"\n🔗 https://{WORKSPACE_URL}/apps/{APP_NAME}")
 
 # COMMAND ----------
 
@@ -318,9 +326,6 @@ print(f"\n🔗 {WORKSPACE_URL}/apps/{APP_NAME}")
 # MAGIC # Monitoring
 
 # COMMAND ----------
-
-# Create monitoring queries in Delta Lake
-print("📊 Setting up monitoring queries...")
 
 # Create monitoring view
 spark.sql(f"""
@@ -339,71 +344,4 @@ GROUP BY DATE(s.last_activity_at), s.user_name
 ORDER BY activity_date DESC, session_count DESC
 """)
 
-print(f"✅ Monitoring view created: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
-
-# Create health check function
-health_check_code = '''
-from databricks.sdk import WorkspaceClient
-import requests
-import time
-
-def check_app_health(app_url: str, timeout: int = 30) -> dict:
-    """
-    Check health of deployed FastAPI application.
-
-    Args:
-        app_url: Base URL of the deployed app
-        timeout: Request timeout in seconds
-
-    Returns:
-        dict with health status information
-    """
-    try:
-        # Check health endpoint
-        response = requests.get(
-            f"{app_url}/health",
-            timeout=timeout
-        )
-
-        if response.status_code == 200:
-            health_data = response.json()
-            return {
-                "status": "healthy",
-                "app_status": health_data.get("status"),
-                "agent_endpoint": health_data.get("agent_endpoint"),
-                "timestamp": health_data.get("timestamp"),
-                "response_time_ms": response.elapsed.total_seconds() * 1000
-            }
-        else:
-            return {
-                "status": "unhealthy",
-                "error": f"HTTP {response.status_code}",
-                "response_time_ms": response.elapsed.total_seconds() * 1000
-            }
-
-    except requests.exceptions.Timeout:
-        return {
-            "status": "unhealthy",
-            "error": "Request timeout"
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
-
-# Example usage
-if __name__ == "__main__":
-    app_url = "https://YOUR_WORKSPACE/apps/hedis-chat-app"
-    result = check_app_health(app_url)
-    print(result)
-'''
-
-with open(repo_root / "health_check.py", "w") as f:
-    f.write(health_check_code)
-
-print(f"✅ Health check script created: {repo_root / 'health_check.py'}")
-
-# Display monitoring query
-print("\n📊 Sample Monitoring Query:")
-print(f"SELECT * FROM {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring LIMIT 10")
+print(f"✅ Monitoring view: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
