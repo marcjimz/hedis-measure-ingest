@@ -248,7 +248,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ⏳ Wait for Backend to be Running
+# MAGIC ## ⏳ Wait for Backend Deployment to Complete
 # MAGIC
 # MAGIC We need the backend URL before deploying the frontend.
 
@@ -295,17 +295,15 @@ while elapsed_time < max_wait_time:
                     print(f"              Message: {deploy_msg}")
 
                 if deploy_state == "SUCCEEDED":
-                    # Deployment succeeded, now check if app is running
+                    # Deployment succeeded - get the app URL
+                    backend_url = app_info.get("url")
                     app_state = app_info.get("status", {}).get("state", "UNKNOWN")
-                    if app_state == "RUNNING":
-                        backend_url = app_info.get("url")
-                        print(f"\n✅ Backend deployment SUCCEEDED and app is RUNNING!")
-                        print(f"   URL: {backend_url}")
-                        print(f"   Health: {backend_url}/health")
-                        print(f"   API Docs: {backend_url}/api/docs")
-                        break
-                    else:
-                        print(f"              App state: {app_state} (waiting for RUNNING...)")
+                    print(f"\n✅ Backend deployment SUCCEEDED!")
+                    print(f"   App state: {app_state}")
+                    print(f"   URL: {backend_url}")
+                    print(f"   Health: {backend_url}/health")
+                    print(f"   API Docs: {backend_url}/api/docs")
+                    break
 
                 elif deploy_state in ["FAILED", "CANCELLED"]:
                     print(f"\n❌ Backend deployment FAILED")
@@ -408,7 +406,7 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ⏳ Wait for Frontend to be Running
+# MAGIC ## ⏳ Wait for Frontend Deployment to Complete
 
 # COMMAND ----------
 
@@ -454,15 +452,13 @@ while elapsed_time < max_wait_time:
                     print(f"              Message: {deploy_msg}")
 
                 if deploy_state == "SUCCEEDED":
-                    # Deployment succeeded, now check if app is running
+                    # Deployment succeeded - get the app URL
+                    frontend_url = app_info.get("url")
                     app_state = app_info.get("status", {}).get("state", "UNKNOWN")
-                    if app_state == "RUNNING":
-                        frontend_url = app_info.get("url")
-                        print(f"\n✅ Frontend deployment SUCCEEDED and app is RUNNING!")
-                        print(f"   URL: {frontend_url}")
-                        break
-                    else:
-                        print(f"              App state: {app_state} (waiting for RUNNING...)")
+                    print(f"\n✅ Frontend deployment SUCCEEDED!")
+                    print(f"   App state: {app_state}")
+                    print(f"   URL: {frontend_url}")
+                    break
 
                 elif deploy_state in ["FAILED", "CANCELLED"]:
                     print(f"\n❌ Frontend deployment FAILED")
