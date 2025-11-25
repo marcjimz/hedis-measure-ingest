@@ -1,8 +1,10 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # HEDIS FastAPI Application Deployment (Mock Mode)
+# MAGIC # HEDIS Chat Application - Dual App Deployment
 # MAGIC
-# MAGIC Deploys app/backend/ FastAPI application with mock services for testing.
+# MAGIC Deploys BOTH frontend and backend as separate Databricks Apps:
+# MAGIC - **Backend**: FastAPI application (app/backend/)
+# MAGIC - **Frontend**: Next.js UI application (app/frontend/)
 
 # COMMAND ----------
 
@@ -46,7 +48,8 @@ except FileNotFoundError:
 # Create configuration widgets with ALL values loaded from config.yaml
 dbutils.widgets.text("catalog_name", config.get("catalog_name", "main"), "Catalog")
 dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurements"), "Schema")
-dbutils.widgets.text("app_name", config.get("app_name", "hedis-chat-app"), "App Name")
+dbutils.widgets.text("backend_app_name", config.get("backend_app_name", "hedis-chat-backend"), "Backend App Name")
+dbutils.widgets.text("frontend_app_name", config.get("frontend_app_name", "hedis-chat-frontend"), "Frontend App Name")
 dbutils.widgets.text("agent_endpoint", config.get("agent_endpoint", "hedis_chat_agent"), "Agent Endpoint Name")
 dbutils.widgets.dropdown("enable_auth", "Yes" if config.get("enable_auth", False) else "No", ["Yes", "No"], "Enable Authentication")
 dbutils.widgets.text("allowed_users", config.get("allowed_users", ""), "Allowed Users (comma-separated, empty = all)")
@@ -54,7 +57,8 @@ dbutils.widgets.text("allowed_users", config.get("allowed_users", ""), "Allowed 
 # Get configuration from widgets
 CATALOG_NAME = dbutils.widgets.get("catalog_name")
 SCHEMA_NAME = dbutils.widgets.get("schema_name")
-APP_NAME = dbutils.widgets.get("app_name")
+BACKEND_APP_NAME = dbutils.widgets.get("backend_app_name")
+FRONTEND_APP_NAME = dbutils.widgets.get("frontend_app_name")
 AGENT_ENDPOINT = dbutils.widgets.get("agent_endpoint")
 ENABLE_AUTH = dbutils.widgets.get("enable_auth") == "Yes"
 ALLOWED_USERS = [u.strip() for u in dbutils.widgets.get("allowed_users").split(",") if u.strip()]
@@ -67,7 +71,8 @@ CURRENT_USER = w.current_user.me().user_name
 print(f"✅ Environment configured:")
 print(f"   Catalog: {CATALOG_NAME}")
 print(f"   Schema: {SCHEMA_NAME}")
-print(f"   App Name: {APP_NAME}")
+print(f"   Backend App: {BACKEND_APP_NAME}")
+print(f"   Frontend App: {FRONTEND_APP_NAME}")
 print(f"   Agent Endpoint: {AGENT_ENDPOINT}")
 print(f"   Authentication: {ENABLE_AUTH}")
 print(f"   Current User: {CURRENT_USER}")
@@ -143,135 +148,9 @@ print(f"   Messages: {messages_count}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🚀 Verify FastAPI Application
-
-# COMMAND ----------
-
-# Verify app/backend/ directory exists with complete application code
-app_dir = repo_root / "app" / "backend"
-
-if not app_dir.exists():
-    raise FileNotFoundError(f"❌ Application directory not found: {app_dir}")
-
-if not (app_dir / "main.py").exists():
-    raise FileNotFoundError(f"❌ Main application file not found: {app_dir / 'main.py'}")
-
-print(f"✅ Using existing FastAPI application: {app_dir / 'main.py'}")
-print(f"   Application will run in MOCK MODE for testing")
-
-# Verify required application structure
-required_files = [
-    "main.py",
-    "config.py",
-    "routers/__init__.py",
-    "routers/chats.py",
-    "routers/reviews.py",
-    "models/__init__.py",
-    "models/api_models.py",
-    "services/mock_chat_history.py",
-    "databricks/mock_agent_service.py",
-    "databricks/mock_uc_functions.py"
-]
-
-missing_files = []
-for file_path in required_files:
-    if not (app_dir / file_path).exists():
-        missing_files.append(file_path)
-
-if missing_files:
-    print(f"\n⚠️  Warning: Missing some expected files:")
-    for f in missing_files:
-        print(f"   - {f}")
-    print(f"   Deployment may fail if these are required files.")
-else:
-    print(f"✅ All required application files verified")
-
-# List all files that will be deployed
-print(f"\n📦 Application structure:")
-import os
-for root, dirs, files in os.walk(app_dir):
-    level = root.replace(str(app_dir), '').count(os.sep)
-    indent = ' ' * 2 * level
-    print(f"{indent}{os.path.basename(root)}/")
-    subindent = ' ' * 2 * (level + 1)
-    for file in files:
-        if not file.endswith('.pyc') and not file.startswith('.'):
-            print(f"{subindent}{file}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 📝 Verify App Configuration
-
-# COMMAND ----------
-
-# Verify app configuration files exist
-app_yaml_path = repo_root / "app" / "app.yaml"
-requirements_path = repo_root / "app" / "requirements.txt"
-
-if not app_yaml_path.exists():
-    print(f"❌ app.yaml not found at: {app_yaml_path}")
-    print(f"   Please create app/app.yaml for backend app configuration")
-else:
-    print(f"✅ App configuration found: {app_yaml_path}")
-
-if not requirements_path.exists():
-    print(f"❌ requirements.txt not found at: {requirements_path}")
-    print(f"   Please create app/requirements.txt for backend dependencies")
-else:
-    print(f"✅ App requirements found: {requirements_path}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 🧪 Local Testing Instructions
-
-# COMMAND ----------
-
-import subprocess
-import time
-import requests
-
-print("🧪 Validating application for local testing...")
-
-# Set environment variables for mock mode testing
-os.environ["MOCK_MODE"] = "true"
-os.environ["DEBUG"] = "true"
-os.environ["CATALOG_NAME"] = CATALOG_NAME
-os.environ["SCHEMA_NAME"] = SCHEMA_NAME
-os.environ["AGENT_ENDPOINT"] = AGENT_ENDPOINT
-os.environ["ENABLE_AUTH"] = "false"
-
-# Start server in background (will stop when cell completes)
-try:
-    # Test imports
-    print("Testing application imports...")
-    sys.path.insert(0, str(app_dir.parent.parent))
-
-    # Quick validation - don't actually start server in notebook
-    print("✅ Application code validated")
-    print("✅ Mock mode configuration set")
-    print("\n📋 To test locally with mock data:")
-    print(f"  cd {repo_root}")
-    print(f"  python app/backend/run_mock.py")
-    print("\n   This will start the server at: http://localhost:8000")
-    print("   API docs available at: http://localhost:8000/api/docs")
-    print("   Health check: http://localhost:8000/health")
-    print("\n📊 Mock data includes:")
-    print("   • 2 sample chats (BCS measure, diabetes)")
-    print("   • Fake HEDIS measure responses")
-    print("   • Mock UC functions service")
-    print("   • In-memory chat history")
-
-except Exception as e:
-    print(f"⚠️  Validation error: {e}")
-    print("This may be expected in notebook environment - deployment should work")
-    raise e
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 🚀 Deploy to Databricks Apps
+# MAGIC ## 🚀 Deploy Backend App (FastAPI)
+# MAGIC
+# MAGIC The backend must be deployed **first** to get its URL for frontend configuration.
 
 # COMMAND ----------
 
@@ -284,24 +163,26 @@ try:
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
     base_url = f"https://{WORKSPACE_URL}/api/2.0"
 
-    # Check if app exists, create if it doesn't
-    get_url = f"{base_url}/apps/{APP_NAME}"
+    print(f"🚀 Deploying Backend App: {BACKEND_APP_NAME}\n")
+
+    # Check if backend app exists, create if it doesn't
+    get_url = f"{base_url}/apps/{BACKEND_APP_NAME}"
     get_response = requests.get(get_url, headers=headers)
 
     if get_response.status_code == 404:
-        # Create the app first
-        create_payload = {"name": APP_NAME}
+        # Create the backend app first
+        create_payload = {"name": BACKEND_APP_NAME}
         create_response = requests.post(f"{base_url}/apps", headers=headers, json=create_payload)
         if create_response.status_code not in [200, 201]:
-            raise Exception(f"Failed to create app: {create_response.text}")
-        print(f"✅ App created: {APP_NAME}")
+            raise Exception(f"Failed to create backend app: {create_response.text}")
+        print(f"✅ Backend app created: {BACKEND_APP_NAME}")
     elif get_response.status_code == 200:
         # Check for active deployment
         app_info = get_response.json()
         current_state = app_info.get("status", {}).get("state", "")
 
         if current_state in ["DEPLOYING", "STARTING"]:
-            print(f"⏳ Active deployment in progress (state: {current_state})")
+            print(f"⏳ Active backend deployment in progress (state: {current_state})")
             print(f"   Waiting for current deployment to complete...")
 
             # Wait for deployment to complete (max 5 minutes)
@@ -323,21 +204,20 @@ try:
                 print(f"⚠️  Deployment still in progress after {max_wait}s")
                 print(f"   Proceeding with new deployment anyway...")
 
-    # Deploy the app - construct workspace path correctly
-    # Ensure path starts with /Workspace/
-    workspace_path = str(repo_root / "app")
-    if not workspace_path.startswith("/Workspace"):
-        workspace_path = f"/Workspace{workspace_path}"
+    # Deploy the backend app - construct workspace path correctly
+    backend_workspace_path = str(repo_root / "app" / "backend")
+    if not backend_workspace_path.startswith("/Workspace"):
+        backend_workspace_path = f"/Workspace{backend_workspace_path}"
 
-    print(f"📂 Deploying from: {workspace_path}")
+    print(f"📂 Deploying backend from: {backend_workspace_path}")
 
-    deploy_url = f"{base_url}/apps/{APP_NAME}/deployments"
-    deploy_payload = {"source_code_path": workspace_path, "mode": "SNAPSHOT"}
+    deploy_url = f"{base_url}/apps/{BACKEND_APP_NAME}/deployments"
+    deploy_payload = {"source_code_path": backend_workspace_path, "mode": "SNAPSHOT"}
     deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
 
     if deploy_response.status_code in [200, 201]:
         deployment_info = deploy_response.json()
-        print(f"✅ Deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
+        print(f"✅ Backend deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
 
         # Check status
         time.sleep(3)
@@ -347,20 +227,262 @@ try:
             if app_info.get("status"):
                 print(f"   Status: {app_info['status'].get('state', 'UNKNOWN')}")
     else:
-        print(f"❌ Deployment failed: {deploy_response.status_code}")
+        print(f"❌ Backend deployment failed: {deploy_response.status_code}")
         print(f"   {deploy_response.text}")
-        raise Exception("Deployment failed: %s" % deploy_response.text)
+        raise Exception("Backend deployment failed: %s" % deploy_response.text)
 
 except Exception as e:
     print(f"❌ Error: {e}")
     raise e
 
-print(f"\n🔗 https://{WORKSPACE_URL}/apps/{APP_NAME}")
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ⏳ Wait for Backend to be Running
+# MAGIC
+# MAGIC We need the backend URL before deploying the frontend.
+
+# COMMAND ----------
+
+print(f"⏳ Waiting for backend to be RUNNING...\n")
+print(f"   This may take 5-10 minutes for initial deployment\n")
+
+max_wait_time = 900  # 15 minutes
+check_interval = 30  # 30 seconds
+elapsed_time = 0
+
+backend_url = None
+get_url = f"{base_url}/apps/{BACKEND_APP_NAME}"
+
+while elapsed_time < max_wait_time:
+    status_response = requests.get(get_url, headers=headers)
+
+    if status_response.status_code == 200:
+        app_info = status_response.json()
+        state = app_info.get("status", {}).get("state", "UNKNOWN")
+
+        print(f"   [{elapsed_time}s] Backend status: {state}")
+
+        if state == "RUNNING":
+            backend_url = app_info.get("url")
+            print(f"\n✅ Backend is running!")
+            print(f"   URL: {backend_url}")
+            print(f"   Health: {backend_url}/health")
+            print(f"   API Docs: {backend_url}/api/docs")
+            break
+        elif state in ["FAILED", "ERROR"]:
+            error_msg = app_info.get("status", {}).get("message", "Unknown error")
+            print(f"\n❌ Backend deployment failed")
+            print(f"   Error: {error_msg}")
+            raise Exception(f"Backend deployment failed: {error_msg}")
+
+    time.sleep(check_interval)
+    elapsed_time += check_interval
+else:
+    raise TimeoutError(f"Backend did not start within {max_wait_time} seconds")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Monitoring
+# MAGIC ## 🚀 Deploy Frontend App (Next.js)
+# MAGIC
+# MAGIC Now we deploy the frontend with the backend URL configured.
+
+# COMMAND ----------
+
+try:
+    print(f"🚀 Deploying Frontend App: {FRONTEND_APP_NAME}\n")
+
+    # Check if frontend app exists, create if it doesn't
+    get_url_frontend = f"{base_url}/apps/{FRONTEND_APP_NAME}"
+    get_response_frontend = requests.get(get_url_frontend, headers=headers)
+
+    if get_response_frontend.status_code == 404:
+        # Create the frontend app first
+        create_payload = {"name": FRONTEND_APP_NAME}
+        create_response = requests.post(f"{base_url}/apps", headers=headers, json=create_payload)
+        if create_response.status_code not in [200, 201]:
+            raise Exception(f"Failed to create frontend app: {create_response.text}")
+        print(f"✅ Frontend app created: {FRONTEND_APP_NAME}")
+    elif get_response_frontend.status_code == 200:
+        # Check for active deployment
+        app_info = get_response_frontend.json()
+        current_state = app_info.get("status", {}).get("state", "")
+
+        if current_state in ["DEPLOYING", "STARTING"]:
+            print(f"⏳ Active frontend deployment in progress (state: {current_state})")
+            print(f"   Waiting for current deployment to complete...")
+
+            # Wait for deployment to complete (max 5 minutes)
+            max_wait = 300  # 5 minutes
+            start_time = time.time()
+
+            while time.time() - start_time < max_wait:
+                time.sleep(10)
+                status_response = requests.get(get_url_frontend, headers=headers)
+                if status_response.status_code == 200:
+                    app_status = status_response.json()
+                    state = app_status.get("status", {}).get("state", "")
+
+                    if state not in ["DEPLOYING", "STARTING"]:
+                        print(f"✅ Previous deployment completed (state: {state})")
+                        break
+                    print(f"   Still deploying... ({int(time.time() - start_time)}s elapsed)")
+            else:
+                print(f"⚠️  Deployment still in progress after {max_wait}s")
+                print(f"   Proceeding with new deployment anyway...")
+
+    # Deploy the frontend app - construct workspace path correctly
+    frontend_workspace_path = str(repo_root / "app" / "frontend")
+    if not frontend_workspace_path.startswith("/Workspace"):
+        frontend_workspace_path = f"/Workspace{frontend_workspace_path}"
+
+    print(f"📂 Deploying frontend from: {frontend_workspace_path}")
+    print(f"🔗 Backend API URL: {backend_url}")
+
+    deploy_url_frontend = f"{base_url}/apps/{FRONTEND_APP_NAME}/deployments"
+
+    # Include environment variable for backend URL
+    deploy_payload_frontend = {
+        "source_code_path": frontend_workspace_path,
+        "mode": "SNAPSHOT"
+    }
+
+    deploy_response_frontend = requests.post(deploy_url_frontend, headers=headers, json=deploy_payload_frontend)
+
+    if deploy_response_frontend.status_code in [200, 201]:
+        deployment_info = deploy_response_frontend.json()
+        print(f"✅ Frontend deployment initiated: {deployment_info.get('deployment_id', 'N/A')}")
+
+        # Check status
+        time.sleep(3)
+        status_response = requests.get(get_url_frontend, headers=headers)
+        if status_response.status_code == 200:
+            app_info = status_response.json()
+            if app_info.get("status"):
+                print(f"   Status: {app_info['status'].get('state', 'UNKNOWN')}")
+    else:
+        print(f"❌ Frontend deployment failed: {deploy_response_frontend.status_code}")
+        print(f"   {deploy_response_frontend.text}")
+        raise Exception("Frontend deployment failed: %s" % deploy_response_frontend.text)
+
+except Exception as e:
+    print(f"❌ Error: {e}")
+    raise e
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ⏳ Wait for Frontend to be Running
+
+# COMMAND ----------
+
+print(f"⏳ Waiting for frontend to be RUNNING...\n")
+print(f"   This may take 5-10 minutes for initial deployment\n")
+print(f"   Frontend needs to build the Next.js app first\n")
+
+max_wait_time = 900  # 15 minutes
+check_interval = 30  # 30 seconds
+elapsed_time = 0
+
+frontend_url = None
+get_url_frontend = f"{base_url}/apps/{FRONTEND_APP_NAME}"
+
+while elapsed_time < max_wait_time:
+    status_response = requests.get(get_url_frontend, headers=headers)
+
+    if status_response.status_code == 200:
+        app_info = status_response.json()
+        state = app_info.get("status", {}).get("state", "UNKNOWN")
+
+        print(f"   [{elapsed_time}s] Frontend status: {state}")
+
+        if state == "RUNNING":
+            frontend_url = app_info.get("url")
+            print(f"\n✅ Frontend is running!")
+            print(f"   URL: {frontend_url}")
+            break
+        elif state in ["FAILED", "ERROR"]:
+            error_msg = app_info.get("status", {}).get("message", "Unknown error")
+            print(f"\n❌ Frontend deployment failed")
+            print(f"   Error: {error_msg}")
+            raise Exception(f"Frontend deployment failed: {error_msg}")
+
+    time.sleep(check_interval)
+    elapsed_time += check_interval
+else:
+    raise TimeoutError(f"Frontend did not start within {max_wait_time} seconds")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🎉 Deployment Summary
+
+# COMMAND ----------
+
+print("\n" + "="*80)
+print("🎉 DUAL APP DEPLOYMENT SUCCESSFUL")
+print("="*80)
+
+print(f"\n📍 Backend App (FastAPI API):")
+print(f"   Name: {BACKEND_APP_NAME}")
+print(f"   URL: {backend_url}")
+print(f"   Health: {backend_url}/health")
+print(f"   API Docs: {backend_url}/api/docs")
+
+print(f"\n📍 Frontend App (Next.js UI):")
+print(f"   Name: {FRONTEND_APP_NAME}")
+print(f"   URL: {frontend_url}")
+print(f"   👉 Access the application here: {frontend_url}")
+
+print(f"\n🔧 Architecture:")
+print(f"   User → Frontend ({frontend_url})")
+print(f"        ↓ (API calls via Next.js rewrites)")
+print(f"        → Backend ({backend_url})")
+print(f"        ↓")
+print(f"        → Databricks Resources")
+
+print(f"\n💡 How It Works:")
+print(f"   • Frontend serves the UI to users")
+print(f"   • Frontend proxies /api/* requests to backend via Next.js rewrites")
+print(f"   • Backend handles all API logic and Databricks integration")
+print(f"   • Both apps scale independently")
+
+print(f"\n📊 Monitoring:")
+print(f"   • Backend: Compute > Apps > {BACKEND_APP_NAME}")
+print(f"   • Frontend: Compute > Apps > {FRONTEND_APP_NAME}")
+
+print(f"\n🧪 Testing:")
+print(f"   1. Navigate to: {frontend_url}")
+print(f"   2. The UI should load successfully")
+print(f"   3. Create a new chat - frontend will call backend API")
+print(f"   4. Verify backend responses work correctly")
+
+print("\n" + "="*80)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 📊 Update Frontend Environment Variable (If Needed)
+# MAGIC
+# MAGIC If the frontend can't reach the backend, you may need to explicitly set the environment variable.
+
+# COMMAND ----------
+
+print(f"⚙️  Backend URL Configuration:\n")
+print(f"The frontend app.yaml should have:")
+print(f"  NEXT_PUBLIC_API_URL: {backend_url}")
+print(f"\nThis is configured in: app/frontend/app.yaml")
+print(f"\nIf you need to update it, modify the app.yaml and redeploy frontend.")
+
+# To update environment variable and redeploy frontend:
+# 1. Update app/frontend/app.yaml with correct BACKEND_API_URL
+# 2. Re-run the frontend deployment cell above
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 📈 Monitoring View
 
 # COMMAND ----------
 
@@ -382,3 +504,51 @@ ORDER BY activity_date DESC, session_count DESC
 """)
 
 print(f"✅ Monitoring view: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🔧 Troubleshooting
+# MAGIC
+# MAGIC ### Frontend Can't Reach Backend
+# MAGIC
+# MAGIC 1. Check CORS settings in `backend/main.py`
+# MAGIC 2. Verify `NEXT_PUBLIC_API_URL` in frontend app.yaml
+# MAGIC 3. Test backend health: `{backend_url}/health`
+# MAGIC 4. Check backend logs in Databricks Apps console
+# MAGIC
+# MAGIC ### Build Failures
+# MAGIC
+# MAGIC **Backend:**
+# MAGIC - Check `app/backend/requirements.txt` dependencies
+# MAGIC - Verify Python version compatibility
+# MAGIC - Review deployment logs
+# MAGIC
+# MAGIC **Frontend:**
+# MAGIC - Check `app/frontend/package.json` dependencies
+# MAGIC - Ensure Node.js version is compatible
+# MAGIC - Verify Next.js build succeeds locally
+# MAGIC
+# MAGIC ### App Not Starting
+# MAGIC
+# MAGIC 1. Check resource allocation in app.yaml files
+# MAGIC 2. Verify health check endpoints respond correctly
+# MAGIC 3. Review startup logs in Apps console
+# MAGIC
+# MAGIC ## 🔄 Redeployment
+# MAGIC
+# MAGIC To redeploy after making changes:
+# MAGIC - **Backend only**: Re-run the "Deploy Backend App" cell
+# MAGIC - **Frontend only**: Re-run the "Deploy Frontend App" cell
+# MAGIC - **Both apps**: Re-run both deployment cells in order
+# MAGIC
+# MAGIC ## 🗑️ Cleanup
+# MAGIC
+# MAGIC To delete the apps, run in a new cell:
+# MAGIC ```python
+# MAGIC # Delete frontend
+# MAGIC requests.delete(f"{base_url}/apps/{FRONTEND_APP_NAME}", headers=headers)
+# MAGIC
+# MAGIC # Delete backend
+# MAGIC requests.delete(f"{base_url}/apps/{BACKEND_APP_NAME}", headers=headers)
+# MAGIC ```
