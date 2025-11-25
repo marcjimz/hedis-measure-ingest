@@ -384,8 +384,17 @@ try:
     # Include environment variable for backend URL
     deploy_payload_frontend = {
         "source_code_path": frontend_workspace_path,
-        "mode": "SNAPSHOT"
+        "mode": "SNAPSHOT",
+        "env": [
+            {
+                "name": "NEXT_PUBLIC_API_URL",
+                "value": backend_url
+            }
+        ]
     }
+
+    print(f"📋 Frontend environment variables:")
+    print(f"   NEXT_PUBLIC_API_URL: {backend_url}")
 
     deploy_response_frontend = requests.post(deploy_url_frontend, headers=headers, json=deploy_payload_frontend)
 
@@ -499,14 +508,15 @@ print(f"   👉 Access the application here: {frontend_url}")
 
 print(f"\n🔧 Architecture:")
 print(f"   User → Frontend ({frontend_url})")
-print(f"        ↓ (API calls via Next.js rewrites)")
+print(f"        ↓ (Direct API calls with CORS)")
 print(f"        → Backend ({backend_url})")
 print(f"        ↓")
 print(f"        → Databricks Resources")
 
 print(f"\n💡 How It Works:")
 print(f"   • Frontend serves the UI to users")
-print(f"   • Frontend proxies /api/* requests to backend via Next.js rewrites")
+print(f"   • Frontend makes direct API calls to backend (CORS enabled)")
+print(f"   • Backend URL configured via NEXT_PUBLIC_API_URL environment variable")
 print(f"   • Backend handles all API logic and Databricks integration")
 print(f"   • Both apps scale independently")
 
@@ -532,14 +542,13 @@ print("\n" + "="*80)
 # COMMAND ----------
 
 print(f"⚙️  Backend URL Configuration:\n")
-print(f"The frontend app.yaml should have:")
-print(f"  NEXT_PUBLIC_API_URL: {backend_url}")
-print(f"\nThis is configured in: app/frontend/app.yaml")
-print(f"\nIf you need to update it, modify the app.yaml and redeploy frontend.")
+print(f"The frontend was deployed with:")
+print(f"  NEXT_PUBLIC_API_URL={backend_url}")
+print(f"\nThis environment variable is set during deployment via the deployment API.")
+print(f"If you need to update it, modify the deployment cell to change the backend URL.")
 
-# To update environment variable and redeploy frontend:
-# 1. Update app/frontend/app.yaml with correct BACKEND_API_URL
-# 2. Re-run the frontend deployment cell above
+# Note: The NEXT_PUBLIC_API_URL is now passed via the deployment API
+# rather than hardcoded in app.yaml, allowing it to be set dynamically
 
 # COMMAND ----------
 
@@ -574,10 +583,12 @@ print(f"✅ Monitoring view: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
 # MAGIC
 # MAGIC ### Frontend Can't Reach Backend
 # MAGIC
-# MAGIC 1. Check CORS settings in `backend/main.py`
-# MAGIC 2. Verify `NEXT_PUBLIC_API_URL` in frontend app.yaml
-# MAGIC 3. Test backend health: `{backend_url}/health`
-# MAGIC 4. Check backend logs in Databricks Apps console
+# MAGIC 1. Verify backend is running and accessible
+# MAGIC 2. Test backend health: `{backend_url}/health`
+# MAGIC 3. Check CORS settings in `backend/main.py` (should allow all origins)
+# MAGIC 4. Verify `NEXT_PUBLIC_API_URL` environment variable in frontend deployment
+# MAGIC 5. Check both frontend and backend logs in Databricks Apps console
+# MAGIC 6. Ensure frontend makes direct API calls to the backend URL
 # MAGIC
 # MAGIC ### Build Failures
 # MAGIC

@@ -4,8 +4,6 @@ command:
   - npm run build && npm start -- -p $DATABRICKS_APP_PORT
 
 env:
-  - name: NEXT_PUBLIC_API_URL
-    value: $BACKEND_API_URL
   - name: NODE_ENV
     value: production
   - name: HOSTNAME

@@ -12,6 +12,7 @@ import type { Chat, User, Message } from "@/lib/types"
 import { ArrowLeft, Send, Loader2, UserCheck } from "lucide-react"
 import Link from "next/link"
 import { isFeatureEnabled } from "@/lib/feature-flags"
+import { apiUrl } from "@/lib/api"
 
 interface ChatInterfaceProps {
   chat: Chat
@@ -53,7 +54,7 @@ export function ChatInterface({ chat: initialChat, currentUser, showBackButton =
 
     try {
       // Call AI API
-      const response = await fetch("/api/chat", {
+      const response = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -116,7 +117,7 @@ export function ChatInterface({ chat: initialChat, currentUser, showBackButton =
 
   const handleRequestReview = async () => {
     try {
-      const response = await fetch("/api/reviews", {
+      const response = await fetch(apiUrl("/api/reviews"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
