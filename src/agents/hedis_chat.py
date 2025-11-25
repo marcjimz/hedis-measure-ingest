@@ -135,8 +135,9 @@ class HEDISChatAgent(ChatAgent):
                 if content and content.strip():
                     result.append(AIMessage(content=content))
             elif role == "tool":
-                # ToolMessage needs tool_call_id
-                result.append(ToolMessage(content=content, tool_call_id=tool_call_id or str(uuid.uuid4()), name=name))
+                # Skip tool messages - these are intermediate execution results
+                # The agent has already consumed them and produced a final response
+                pass
             else:  # "user" or default
                 result.append(HumanMessage(content=content))
 
@@ -253,31 +254,36 @@ class HEDISChatAgent(ChatAgent):
 
         def call_model(state: MessagesState, config: RunnableConfig):
             """Call the model with system prompt prepended."""
-            from langchain_core.messages import SystemMessage, AIMessage
+            from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 
             messages_with_system = state["messages"]
 
-            # Filter out intermediate assistant messages with empty content
-            # These are created when the agent makes tool calls but hasn't responded yet
-            # LLM APIs require all messages to have non-empty content
+            # Filter out intermediate execution messages
+            # - Empty AIMessages (tool-calling steps with no content)
+            # - ToolMessages (tool execution results - already consumed by agent)
+            # This keeps only the user-agent conversation flow
             filtered_messages = []
-            skipped_count = 0
+            skipped_ai = 0
+            skipped_tool = 0
             for msg in messages_with_system:
-                # Skip AIMessages with empty content (intermediate tool-calling steps)
                 if isinstance(msg, AIMessage):
                     content = getattr(msg, 'content', '')
                     if content and content.strip():
-                        # Keep messages with actual content, but remove tool_calls for historical messages
+                        # Keep assistant messages with actual content (final responses)
+                        # Remove tool_calls for historical messages to avoid validation errors
                         filtered_messages.append(AIMessage(content=content))
                     else:
-                        # Skip empty assistant message
-                        skipped_count += 1
+                        # Skip empty assistant messages (intermediate tool-calling steps)
+                        skipped_ai += 1
+                elif isinstance(msg, ToolMessage):
+                    # Skip tool messages (intermediate execution results)
+                    skipped_tool += 1
                 else:
-                    # Keep all non-assistant messages as-is
+                    # Keep user messages, system messages, etc.
                     filtered_messages.append(msg)
 
-            if skipped_count > 0:
-                print(f"  🧹 Filtered out {skipped_count} empty assistant message(s) from history")
+            if skipped_ai > 0 or skipped_tool > 0:
+                print(f"  🧹 Filtered out {skipped_ai} empty assistant + {skipped_tool} tool message(s) from history")
 
             messages_with_system = filtered_messages
 
