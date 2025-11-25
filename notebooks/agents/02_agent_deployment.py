@@ -5,11 +5,11 @@
 # MAGIC Build and deploy a LangGraph agent for HEDIS measure analysis on Databricks.
 # MAGIC
 # MAGIC **Tech Stack:**
-# MAGIC - 🏢 **Databricks Foundation Models** - Pay-per-token LLM endpoints
+# MAGIC - 🏢 **Databricks Foundation Models** - Pay-per-token LLM endpoints (Sonnet 4.5)
 # MAGIC - 🗄️ **Lakebase (Postgres)** - Persistent conversation management
 # MAGIC - 🔄 **LangGraph** - Stateful agent workflows
 # MAGIC - 📊 **MLflow** - Model tracking and deployment
-# MAGIC - 🔧 **Unity Catalog Functions** - Measure lookup, vector search, query expansion
+# MAGIC - 🔧 **Unity Catalog Functions** - Vector search over HEDIS chunks
 
 # COMMAND ----------
 
@@ -101,6 +101,8 @@ print(f"   Persistence: {ENABLE_PERSISTENCE}")
 if ENABLE_PERSISTENCE:
     print(f"   Lakebase Instance: {LAKEBASE_INSTANCE}")
 
+mlflow.autolog()
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -159,7 +161,7 @@ agent = HEDISChatAgentFactory.create(
 
 print("\n✅ HEDIS Chat Agent Created!")
 print(f"  - Effective Year: {agent.effective_year}")
-print(f"  - Tools: measures_definition_lookup, measures_document_search, measures_search_expansion")
+print(f"  - Tools: measures_document_search")
 print(f"  - Persistence: {'ENABLED' if ENABLE_PERSISTENCE else 'DISABLED'}")
 
 # COMMAND ----------
@@ -244,20 +246,19 @@ mlflow.set_registry_uri('databricks-uc')
 agent_path = "../../src/agents/hedis_chat.py"
 
 # Create agent configuration
+# This config is saved with the model and read by the agent at deployment time
 agent_config = {
     "endpoint_name": ENDPOINT_NAME,
     "catalog_name": CATALOG_NAME,
     "schema_name": SCHEMA_NAME,
-    "effective_year": agent.effective_year,
+    "effective_year": agent.effective_year,  # Used as default filter_year for measures_document_search
 }
 
 # Create resources list - includes serving endpoint and optionally Lakebase
 resources = [
     DatabricksServingEndpoint(endpoint_name=ENDPOINT_NAME),
     DatabricksVectorSearchIndex(index_name=VS_INDEX),
-    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_definition_lookup"),
     DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_document_search"),
-    DatabricksFunction(function_name=f"{CATALOG_NAME}.{SCHEMA_NAME}.measures_search_expansion"),
 ]
 
 if ENABLE_PERSISTENCE:
@@ -388,12 +389,17 @@ envvars = {
     "UC_SCHEMA": SCHEMA_NAME,
 }
 
+# EFFECTIVE_YEAR can be set via env var (takes precedence) or model_config
+# Priority: ENV > model_config > auto-detect from database
 if EFFECTIVE_YEAR:
     envvars["EFFECTIVE_YEAR"] = str(EFFECTIVE_YEAR)
 
 print("Environment variables configured for deployment:")
 for key, value in envvars.items():
     print(f"   {key}: {value}")
+
+if agent.effective_year and "EFFECTIVE_YEAR" not in envvars:
+    print(f"   effective_year will be read from model_config: {agent.effective_year}")
 
 if ENABLE_PERSISTENCE:
     print(f"\nℹ️  Lakebase resource will be added to deployment:")
@@ -452,3 +458,7 @@ try:
 except Exception as e:
     print(f"❌ Error testing endpoint: {e}")
     raise e
+
+# COMMAND ----------
+
+

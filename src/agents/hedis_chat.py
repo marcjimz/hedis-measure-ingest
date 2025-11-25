@@ -4,8 +4,8 @@ HEDIS Chat Agent
 A production-ready LangGraph-based chat agent for HEDIS measure analysis.
 
 Features:
-- Answer questions about HEDIS measures using vector search and measure definitions
-- Integration with Unity Catalog functions (measure lookup, document search, query expansion)
+- Answer questions about HEDIS measures using vector search over document chunks
+- Integration with Unity Catalog function for document search
 - Configurable persistence with PostgreSQL checkpointing
 - Streaming and non-streaming support
 - Thread-based conversation management
@@ -49,11 +49,7 @@ from mlflow.types.agent import (
 )
 
 # Import HEDIS prompts
-try:
-    from src.agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
-except ImportError:
-    # Fallback for different import contexts
-    from agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
+from src.agents.prompts.hedis import HEDIS_CHAT_AGENT_SYSTEM_PROMPT
 
 # Enable MLflow tracing for LangChain/LangGraph
 mlflow.autolog()
@@ -134,16 +130,43 @@ class HEDISChatAgent(ChatAgent):
             if role == "system":
                 result.append(SystemMessage(content=content))
             elif role == "assistant":
-                # AIMessage with optional tool calls
-                if tool_calls:
-                    result.append(AIMessage(content=content, tool_calls=tool_calls))
-                else:
+                # Skip assistant messages with empty content (these are intermediate tool-calling steps)
+                # LLM APIs require all messages to have non-empty content
+                if content and content.strip():
                     result.append(AIMessage(content=content))
             elif role == "tool":
-                # ToolMessage needs tool_call_id
-                result.append(ToolMessage(content=content, tool_call_id=tool_call_id or str(uuid.uuid4()), name=name))
+                # Skip tool messages - these are intermediate execution results
+                # The agent has already consumed them and produced a final response
+                pass
             else:  # "user" or default
                 result.append(HumanMessage(content=content))
+
+        return result
+
+    def _extract_new_messages(self, all_messages: List) -> List[ChatAgentMessage]:
+        """
+        Extract only the new assistant response from the full conversation state.
+
+        In multi-turn conversations, the graph state contains all historical messages.
+        We only want to return the latest assistant response to the user.
+
+        Args:
+            all_messages: All messages from graph state
+
+        Returns:
+            List containing only the latest assistant message(s)
+        """
+        from langchain_core.messages import AIMessage
+
+        # Find the last assistant message with content
+        result = []
+        for msg in reversed(all_messages):
+            if isinstance(msg, AIMessage):
+                content = getattr(msg, 'content', '')
+                if content and content.strip():
+                    # Found the latest assistant response
+                    result.append(self._parse_message(msg))
+                    break
 
         return result
 
@@ -280,6 +303,14 @@ class HEDISChatAgent(ChatAgent):
                     ] + messages_with_system
 
             response = model_with_tools.invoke(messages_with_system, config)
+
+            # Debug: Log if agent made tool calls
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                print(f"  🤖 Agent made {len(response.tool_calls)} tool call(s)")
+                for i, tc in enumerate(response.tool_calls, 1):
+                    tool_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', 'unknown')
+                    print(f"     {i}. {tool_name}")
+
             return {"messages": [response]}
 
         # Build the graph
@@ -374,11 +405,8 @@ class HEDISChatAgent(ChatAgent):
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
                     result = agent.invoke({"messages": langchain_messages}, config)
 
-                    # Parse output messages
-                    out_messages = []
-                    if result.get("messages"):
-                        for msg in result["messages"]:
-                            out_messages.append(self._parse_message(msg))
+                    # Extract only the NEW messages (latest assistant response)
+                    out_messages = self._extract_new_messages(result.get("messages", []))
             else:
                 # Fall back to connection string (deprecated)
                 with Connection.connect(self.conn_string) as conn:
@@ -388,11 +416,8 @@ class HEDISChatAgent(ChatAgent):
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
                     result = agent.invoke({"messages": langchain_messages}, config)
 
-                    # Parse output messages
-                    out_messages = []
-                    if result.get("messages"):
-                        for msg in result["messages"]:
-                            out_messages.append(self._parse_message(msg))
+                    # Extract only the NEW messages (latest assistant response)
+                    out_messages = self._extract_new_messages(result.get("messages", []))
         else:
             # Non-persistent mode - no threading
             thread_id = thread_id or str(uuid.uuid4())
@@ -401,11 +426,8 @@ class HEDISChatAgent(ChatAgent):
             langchain_messages = self._convert_to_langchain_messages(messages)
             result = agent.invoke({"messages": langchain_messages})
 
-            # Parse output messages
-            out_messages = []
-            if result.get("messages"):
-                for msg in result["messages"]:
-                    out_messages.append(self._parse_message(msg))
+            # Extract only the NEW messages (latest assistant response)
+            out_messages = self._extract_new_messages(result.get("messages", []))
 
         # Build custom outputs
         custom_outputs = {
@@ -465,11 +487,17 @@ class HEDISChatAgent(ChatAgent):
 
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
-                        if chunk.get("messages"):
-                            for msg in chunk["messages"]:
-                                parsed_msg = self._parse_message(msg)
-                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
+                    # Use stream_mode="updates" to get only new messages, not full state
+                    for node_name, updates in agent.stream({"messages": langchain_messages}, config, stream_mode="updates"):
+                        if "messages" in updates:
+                            for msg in updates["messages"]:
+                                # Only stream assistant messages with content
+                                from langchain_core.messages import AIMessage
+                                if isinstance(msg, AIMessage):
+                                    content = getattr(msg, 'content', '')
+                                    if content and content.strip():
+                                        parsed_msg = self._parse_message(msg)
+                                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
             else:
                 # Fall back to connection string (deprecated)
                 with Connection.connect(self.conn_string) as conn:
@@ -478,11 +506,17 @@ class HEDISChatAgent(ChatAgent):
 
                     langchain_messages = self._convert_to_langchain_messages(messages_to_send)
 
-                    for chunk in agent.stream({"messages": langchain_messages}, config, stream_mode="values"):
-                        if chunk.get("messages"):
-                            for msg in chunk["messages"]:
-                                parsed_msg = self._parse_message(msg)
-                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
+                    # Use stream_mode="updates" to get only new messages, not full state
+                    for node_name, updates in agent.stream({"messages": langchain_messages}, config, stream_mode="updates"):
+                        if "messages" in updates:
+                            for msg in updates["messages"]:
+                                # Only stream assistant messages with content
+                                from langchain_core.messages import AIMessage
+                                if isinstance(msg, AIMessage):
+                                    content = getattr(msg, 'content', '')
+                                    if content and content.strip():
+                                        parsed_msg = self._parse_message(msg)
+                                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
         else:
             # Non-persistent streaming
             thread_id = thread_id or str(uuid.uuid4())
@@ -490,11 +524,17 @@ class HEDISChatAgent(ChatAgent):
 
             langchain_messages = self._convert_to_langchain_messages(messages)
 
-            for chunk in agent.stream({"messages": langchain_messages}, stream_mode="values"):
-                if chunk.get("messages"):
-                    for msg in chunk["messages"]:
-                        parsed_msg = self._parse_message(msg)
-                        yield ChatAgentChunk(delta=parsed_msg.__dict__)
+            # Use stream_mode="updates" to get only new messages
+            for node_name, updates in agent.stream({"messages": langchain_messages}, stream_mode="updates"):
+                if "messages" in updates:
+                    for msg in updates["messages"]:
+                        # Only stream assistant messages with content
+                        from langchain_core.messages import AIMessage
+                        if isinstance(msg, AIMessage):
+                            content = getattr(msg, 'content', '')
+                            if content and content.strip():
+                                parsed_msg = self._parse_message(msg)
+                                yield ChatAgentChunk(delta=parsed_msg.__dict__)
 
         # Don't yield custom_outputs in streaming mode as it causes validation errors
         # Custom outputs can be retrieved from the final response if needed
@@ -511,22 +551,62 @@ class HEDISChatAgentFactory:
 
     # Default UC functions for HEDIS operations
     DEFAULT_UC_FUNCTIONS = [
-        "measures_definition_lookup",  # Tool for looking up measure definitions
         "measures_document_search",    # Tool for semantic search over HEDIS chunks
-        "measures_search_expansion"    # Tool for AI-powered query expansion
     ]
 
     @staticmethod
-    def _get_latest_effective_year(catalog_name: str, schema_name: str) -> int:
+    def _wrap_search_tool(original_tool: BaseTool, default_year: int) -> BaseTool:
+        """
+        Wrap the measures_document_search tool to inject filter_year parameter.
+
+        Args:
+            original_tool: The original UC function tool
+            default_year: Default effective_year to use for filtering
+
+        Returns:
+            Wrapped tool that injects filter_year parameter
+        """
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel, Field
+
+        # Define input schema with filter_year having a default
+        class SearchInput(BaseModel):
+            search_query: str = Field(..., description="The search query text")
+            num_results: int = Field(5, description="Number of results to return")
+            filter_year: int = Field(default_year, description=f"Filter results by effective year (default: {default_year})")
+
+        def wrapped_search_func(search_query: str, num_results: int = 5, filter_year: int = default_year):
+            """Search HEDIS measure documents with automatic year filtering."""
+            # Debug: Log tool invocation
+            print(f"  🔍 Tool invoked: measures_document_search(query='{search_query[:50]}...', num_results={num_results}, filter_year={filter_year})")
+
+            # Call the original tool with all three parameters
+            return original_tool.invoke({
+                "search_query": search_query,
+                "num_results": num_results,
+                "filter_year": filter_year
+            })
+
+        # Create wrapped tool with the same name and description
+        return StructuredTool(
+            name=original_tool.name,
+            description=f"{original_tool.description} (automatically filters to year {default_year} unless specified)",
+            func=wrapped_search_func,
+            args_schema=SearchInput
+        )
+
+    @staticmethod
+    def _get_latest_effective_year(catalog_name: str, schema_name: str, fallback: Optional[int] = None) -> Optional[int]:
         """
         Query the database to get the latest effective_year from hedis_measures_definitions.
 
         Args:
             catalog_name: Unity Catalog catalog name
             schema_name: Unity Catalog schema name
+            fallback: Fallback value if query fails (optional)
 
         Returns:
-            Latest effective_year as integer, or 2025 if query fails
+            Latest effective_year as integer, or fallback if query fails, or None if no fallback
         """
         try:
             from pyspark.sql import SparkSession
@@ -542,7 +622,7 @@ class HEDISChatAgentFactory:
         except Exception as e:
             print(f"Warning: Could not auto-detect effective_year: {e}")
 
-        return 2025  # Fallback
+        return fallback  # Return fallback (could be None)
 
     @staticmethod
     def create(
@@ -562,7 +642,7 @@ class HEDISChatAgentFactory:
 
         Args:
             endpoint_name: Databricks model serving endpoint
-            uc_function_names: UC function names for tools (default: measure_lookup, vector_search)
+            uc_function_names: UC function names for tools (default: measures_document_search)
             catalog_name: Unity Catalog catalog name (for namespaced functions)
             schema_name: Unity Catalog schema name (for namespaced functions)
             conn_string: Database connection string (deprecated, use connection_pool)
@@ -578,13 +658,27 @@ class HEDISChatAgentFactory:
         if enable_persistence and not (conn_string or connection_pool):
             raise ValueError("Connection string or connection pool required when persistence is enabled")
 
-        # Auto-detect effective_year if not provided
-        if effective_year is None and catalog_name and schema_name:
-            effective_year = HEDISChatAgentFactory._get_latest_effective_year(catalog_name, schema_name)
-            print(f"Auto-detected effective_year: {effective_year}")
-        elif effective_year is None:
-            effective_year = 2025
-            print(f"Using default effective_year: {effective_year}")
+        # Determine effective_year
+        if effective_year is None:
+            # Try to auto-detect from database
+            if catalog_name and schema_name:
+                effective_year = HEDISChatAgentFactory._get_latest_effective_year(
+                    catalog_name, schema_name, fallback=None
+                )
+                if effective_year:
+                    print(f"Auto-detected effective_year: {effective_year}")
+
+            # If still None, raise error - must be configured
+            if effective_year is None:
+                raise ValueError(
+                    "effective_year must be specified either:\n"
+                    "  1. Via the effective_year parameter\n"
+                    "  2. Via EFFECTIVE_YEAR environment variable\n"
+                    "  3. Via model_config (for deployed agents)\n"
+                    "  4. Auto-detected from database (requires valid catalog/schema)"
+                )
+        else:
+            print(f"Using configured effective_year: {effective_year}")
 
         # Wire UC function client
         client = databricks_function_client or DatabricksFunctionClient()
@@ -605,10 +699,26 @@ class HEDISChatAgentFactory:
         uc_toolkit = UCFunctionToolkit(function_names=tool_names)
         tools = uc_toolkit.tools
 
+        # Wrap tools to inject effective_year for measures_document_search
+        wrapped_tools = []
+        for tool in tools:
+            if "measures_document_search" in tool.name:
+                # Wrap the tool to inject filter_year parameter
+                wrapped_tool = HEDISChatAgentFactory._wrap_search_tool(tool, effective_year)
+                wrapped_tools.append(wrapped_tool)
+                print(f"  Wrapped tool: {tool.name} -> filter_year default = {effective_year}")
+            else:
+                wrapped_tools.append(tool)
+
+        # Debug: Print tool count
+        print(f"  Total tools registered: {len(wrapped_tools)}")
+        for i, tool in enumerate(wrapped_tools, 1):
+            print(f"    {i}. {tool.name}")
+
         # Return agent
         return HEDISChatAgent(
             model=llm,
-            tools=tools,
+            tools=wrapped_tools,
             conn_string=conn_string,
             connection_pool=connection_pool,
             enable_persistence=enable_persistence,
@@ -654,18 +764,28 @@ class HEDISChatAgentFactory:
 endpoint_name = os.getenv("ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
 catalog_name = os.getenv("UC_CATALOG", "main")
 schema_name = os.getenv("UC_SCHEMA", "hedis_measurements")
-effective_year_str = os.getenv("EFFECTIVE_YEAR")
-effective_year = int(effective_year_str) if effective_year_str else None
 
 # Try to read model_config for deployment configuration
 try:
     model_config = mlflow.models.ModelConfig(development_config="model_config.yaml")
     enable_persistence = model_config.get("enable_persistence", False)
     lakebase_instance = model_config.get("lakebase_instance")
+    # Read effective_year from model_config if available
+    config_effective_year = model_config.get("effective_year")
 except Exception:
     # Model config not available, use defaults
     enable_persistence = False
     lakebase_instance = None
+    config_effective_year = None
+
+# Determine effective_year priority: ENV > model_config > None (will auto-detect or error)
+effective_year_str = os.getenv("EFFECTIVE_YEAR")
+if effective_year_str:
+    effective_year = int(effective_year_str)
+elif config_effective_year:
+    effective_year = int(config_effective_year)
+else:
+    effective_year = None  # Will be auto-detected or raise error in factory
 
 # Get connection pool if persistence enabled
 # When deployed with DatabricksLakebase resource, use passthrough authentication

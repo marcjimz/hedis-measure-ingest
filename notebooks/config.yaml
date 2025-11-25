@@ -20,7 +20,7 @@ chunk_size: "1024"
 overlap_percent: "0.15"
 
 # LLM Configuration
-llm_endpoint: "databricks-claude-opus-4-1"
+llm_endpoint: "databricks-claude-sonnet-4-5"
 
 # Persistence Configuration
 enable_persistence: "No"
