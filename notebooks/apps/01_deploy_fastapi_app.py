@@ -277,58 +277,92 @@ except Exception as e:
 print(f"🚀 Deploying {APP_NAME} to Databricks Apps...")
 
 try:
-    from databricks.sdk.service.apps import App, AppDeployment, AppDeploymentMode, AppDeploymentStatus
+    import requests
+    import json
+
+    # Get authentication token
+    api_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+
+    base_url = f"https://{WORKSPACE_URL}/api/2.0"
 
     # Check if app already exists
-    existing_app = None
-    try:
-        existing_app = w.apps.get(name=APP_NAME)
+    print(f"📦 Checking if app exists: {APP_NAME}")
+    get_url = f"{base_url}/apps/{APP_NAME}"
+    get_response = requests.get(get_url, headers=headers)
+
+    if get_response.status_code == 200:
         print(f"✅ Found existing app: {APP_NAME}")
-        print(f"   Current status: {existing_app.status.state if existing_app.status else 'UNKNOWN'}")
-    except Exception:
+        app_info = get_response.json()
+        if app_info.get("status"):
+            print(f"   Current status: {app_info['status'].get('state', 'UNKNOWN')}")
+    else:
         print(f"📦 Creating new app: {APP_NAME}")
 
-    # Deploy the app
+    # Deploy the app using REST API
     print(f"📤 Deploying from source directory: {repo_root / 'app'}")
     print(f"   Using configuration: {repo_root / 'app/app.yaml'}")
 
-    # Start deployment using Databricks SDK
-    deployment = w.apps.deploy(
-        app_name=APP_NAME,
-        source_code_path=str(repo_root / "app")
-    )
+    # Create deployment using REST API
+    deploy_url = f"{base_url}/apps/{APP_NAME}/deployments"
+    deploy_payload = {
+        "source_code_path": str(repo_root / "app"),
+        "mode": "SNAPSHOT"
+    }
 
-    print(f"✅ Deployment initiated!")
-    print(f"   App Name: {APP_NAME}")
-    print(f"   Status: {deployment.status.state if deployment.status else 'DEPLOYING'}")
+    print(f"📡 Sending deployment request...")
+    deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
 
-    # Provide app URLs
-    app_url = f"https://{WORKSPACE_URL}/apps/{APP_NAME}"
-    docs_url = f"{app_url}/api/docs"
-    health_url = f"{app_url}/health"
+    if deploy_response.status_code in [200, 201]:
+        deployment_info = deploy_response.json()
+        print(f"✅ Deployment initiated!")
+        print(f"   App Name: {APP_NAME}")
+        print(f"   Deployment ID: {deployment_info.get('deployment_id', 'N/A')}")
 
-    print(f"\n🔗 App URLs (available after deployment completes):")
-    print(f"   Application: {app_url}")
-    print(f"   API Docs: {docs_url}")
-    print(f"   Health Check: {health_url}")
+        # Provide app URLs
+        app_url = f"https://{WORKSPACE_URL}/apps/{APP_NAME}"
+        docs_url = f"{app_url}/api/docs"
+        health_url = f"{app_url}/health"
 
-    print(f"\n📊 Monitor deployment status:")
-    print(f"   w.apps.get(name='{APP_NAME}')")
+        print(f"\n🔗 App URLs (available after deployment completes):")
+        print(f"   Application: {app_url}")
+        print(f"   API Docs: {docs_url}")
+        print(f"   Health Check: {health_url}")
 
-except ImportError as e:
-    print(f"⚠️  Databricks SDK Apps service not available: {e}")
-    print(f"   Falling back to CLI instructions...")
-    print(f"\n🚀 Deploy using Databricks CLI:")
-    print(f"   cd {repo_root}")
-    print(f"   databricks apps deploy --source-dir app --app-name {APP_NAME}")
-    print(f"\n🔗 App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}")
+        print(f"\n📊 Monitor deployment status:")
+        print(f"   Check the Apps UI or run this cell again")
+
+        # Wait a moment and check status
+        import time
+        time.sleep(3)
+        status_response = requests.get(get_url, headers=headers)
+        if status_response.status_code == 200:
+            app_info = status_response.json()
+            if app_info.get("status"):
+                print(f"\n📈 Current status: {app_info['status'].get('state', 'UNKNOWN')}")
+                if app_info['status'].get('message'):
+                    print(f"   Message: {app_info['status']['message']}")
+    else:
+        print(f"❌ Deployment failed with status {deploy_response.status_code}")
+        print(f"   Response: {deploy_response.text}")
+        print(f"\n🚀 Fallback to CLI deployment:")
+        print(f"   cd {repo_root}")
+        print(f"   databricks apps deploy --source-dir app --app-name {APP_NAME}")
 
 except Exception as e:
     print(f"❌ Deployment error: {e}")
+    import traceback
+    print(f"   Details: {traceback.format_exc()}")
     print(f"\n🚀 Alternative deployment methods:")
     print(f"   1. CLI: databricks apps deploy --source-dir app --app-name {APP_NAME}")
     print(f"   2. UI: Upload via Databricks Apps console")
-    print(f"\n🔗 App URL: https://{WORKSPACE_URL}/apps/{APP_NAME}")
+
+# Display app URL regardless
+app_url = f"https://{WORKSPACE_URL}/apps/{APP_NAME}"
+print(f"\n🔗 App URL: {app_url}")
 
 # COMMAND ----------
 
