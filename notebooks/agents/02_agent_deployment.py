@@ -413,7 +413,7 @@ from databricks import agents
 deployment_info = agents.deploy(
     model_name=uc_model_fqn,
     model_version=uc_registered_model_info.version,
-    scale_to_zero=True,
+    scale_to_zero=False,
     resources=resources,
     environment_vars=envvars,
 )
