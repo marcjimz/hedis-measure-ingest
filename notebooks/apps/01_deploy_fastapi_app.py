@@ -294,6 +294,33 @@ try:
         if create_response.status_code not in [200, 201]:
             raise Exception(f"Failed to create app: {create_response.text}")
         print(f"✅ App created: {APP_NAME}")
+    elif get_response.status_code == 200:
+        # Check for active deployment
+        app_info = get_response.json()
+        current_state = app_info.get("status", {}).get("state", "")
+
+        if current_state in ["DEPLOYING", "STARTING"]:
+            print(f"⏳ Active deployment in progress (state: {current_state})")
+            print(f"   Waiting for current deployment to complete...")
+
+            # Wait for deployment to complete (max 5 minutes)
+            max_wait = 300  # 5 minutes
+            start_time = time.time()
+
+            while time.time() - start_time < max_wait:
+                time.sleep(10)
+                status_response = requests.get(get_url, headers=headers)
+                if status_response.status_code == 200:
+                    app_status = status_response.json()
+                    state = app_status.get("status", {}).get("state", "")
+
+                    if state not in ["DEPLOYING", "STARTING"]:
+                        print(f"✅ Previous deployment completed (state: {state})")
+                        break
+                    print(f"   Still deploying... ({int(time.time() - start_time)}s elapsed)")
+            else:
+                print(f"⚠️  Deployment still in progress after {max_wait}s")
+                print(f"   Proceeding with new deployment anyway...")
 
     # Deploy the app
     deploy_url = f"{base_url}/apps/{APP_NAME}/deployments"
@@ -317,6 +344,7 @@ try:
 
 except Exception as e:
     print(f"❌ Error: {e}")
+    raise e
 
 print(f"\n🔗 https://{WORKSPACE_URL}/apps/{APP_NAME}")
 
