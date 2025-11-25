@@ -1,7 +1,7 @@
 command:
   - /bin/sh
   - -c
-  - npm run build && npm start -- -p $APP_PORT
+  - npm run build && npm start -- -p $DATABRICKS_APP_PORT
 
 env:
   - name: NEXT_PUBLIC_API_URL
