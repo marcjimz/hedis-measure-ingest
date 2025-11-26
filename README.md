@@ -15,5 +15,19 @@ Data pipeline for ingesting and processing NCQA HEDIS measures with agent-based 
 - **Optional persistence**: Lakebase PostgreSQL checkpointing
 - **Evaluation framework**: MLflow-based with 20 test queries
 
+## HEDIS Chat Application
+
+Interactive web application for exploring HEDIS measures and patient data, deployed as Databricks Apps.
+
+![HEDIS Chat Application](assets/images/app-1.png)
+
+### Architecture
+- **Frontend**: Next.js application with Tailwind CSS
+- **Backend**: FastAPI with CORS-enabled API
+- **Deployment**: Dual Databricks Apps (frontend + backend)
+
+### Deploy
+Run `notebooks/apps/01_deploy_fastapi_app.py` to deploy both frontend and backend apps to Databricks.
+
 ## Requirements
 See `requirements.txt`
