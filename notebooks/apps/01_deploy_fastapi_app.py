@@ -218,8 +218,33 @@ try:
     print(f"   Mode: SNAPSHOT")
     print(f"   Expected app.yaml at: {backend_workspace_path}/app.yaml")
 
+    # Environment variables for backend - override app.yaml with config values
+    backend_env = [
+        {"name": "MOCK_MODE", "value": "false"},
+        {"name": "CATALOG_NAME", "value": CATALOG_NAME},
+        {"name": "SCHEMA_NAME", "value": SCHEMA_NAME},
+        {"name": "AGENT_ENDPOINT", "value": AGENT_ENDPOINT},
+        {"name": "ENABLE_AUTH", "value": "true" if ENABLE_AUTH else "false"},
+    ]
+
+    if ALLOWED_USERS:
+        backend_env.append({"name": "ALLOWED_USERS", "value": ",".join(ALLOWED_USERS)})
+
+    print(f"\n📋 Backend environment variables:")
+    print(f"   MOCK_MODE: false")
+    print(f"   CATALOG_NAME: {CATALOG_NAME}")
+    print(f"   SCHEMA_NAME: {SCHEMA_NAME}")
+    print(f"   AGENT_ENDPOINT: {AGENT_ENDPOINT}")
+    print(f"   ENABLE_AUTH: {ENABLE_AUTH}")
+    if ALLOWED_USERS:
+        print(f"   ALLOWED_USERS: {','.join(ALLOWED_USERS)}")
+
     deploy_url = f"{base_url}/apps/{BACKEND_APP_NAME}/deployments"
-    deploy_payload = {"source_code_path": backend_workspace_path, "mode": "SNAPSHOT"}
+    deploy_payload = {
+        "source_code_path": backend_workspace_path,
+        "mode": "SNAPSHOT",
+        "env": backend_env
+    }
 
     print(f"\n🚀 POSTing deployment request...")
     deploy_response = requests.post(deploy_url, headers=headers, json=deploy_payload)
