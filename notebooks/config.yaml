@@ -35,11 +35,19 @@ backend_app_name: "hedis-chat-backend"
 frontend_app_name: "hedis-chat-frontend"
 agent_endpoint: "hedis_chat_agent"
 
-# SQL Warehouse ID for backend Delta table access via SDK
-# Find ID in: SQL > SQL Warehouses > Click warehouse > Connection Details > Server hostname
-# Extract the warehouse ID from the path (format: /sql/1.0/warehouses/<warehouse_id>)
-# Leave empty to use mock mode (no real Delta tables)
-sql_warehouse_id: ""
+# SQL Warehouse Configuration for Backend Delta Table Access
+# The backend uses Databricks SQL Warehouse (via SDK) to query Delta tables - no PySpark needed
+#
+# How to find your SQL Warehouse ID:
+#   1. Navigate to: SQL > SQL Warehouses in Databricks workspace
+#   2. Click on your warehouse name
+#   3. Go to "Connection Details" tab
+#   4. Copy the warehouse ID from the Server hostname path: /sql/1.0/warehouses/<warehouse_id>
+#
+# Example: If Server hostname shows "/sql/1.0/warehouses/abc123def456", use "abc123def456"
+#
+# Note: Leave empty to use MOCK MODE (in-memory data, no real Delta tables)
+sql_warehouse_id: "148ccb90800933a1"
 
 enable_auth: false
 allowed_users: ""  # Comma-separated list of allowed users, empty = all users allowed

@@ -40,7 +40,10 @@ class Settings(BaseSettings):
     uc_schema: str = "hedis_measurements"
 
     # SQL Warehouse (for Apps deployment)
-    sql_warehouse_id: Optional[str] = None  # SQL Warehouse ID for SQL execution
+    # Required for production mode to access Delta tables via SQL Warehouse API
+    # Find in: SQL > SQL Warehouses > Connection Details > Server hostname path
+    # Example: "abc123def456" from /sql/1.0/warehouses/abc123def456
+    sql_warehouse_id: Optional[str] = None
 
     # LLM
     llm_endpoint: str = "databricks-claude-sonnet-4-5"
