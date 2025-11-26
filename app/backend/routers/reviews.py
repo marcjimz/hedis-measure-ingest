@@ -33,9 +33,9 @@ if settings.mock_mode:
     agent_service = MockAgentService()
 else:
     logger.info("Using PRODUCTION services with Databricks")
-    from services.delta_table_chat_history import DeltaTableChatHistoryManager
+    from services.sql_warehouse_chat_history import SQLWarehouseChatHistoryManager
     from databricks.agent_service import AgentService
-    chat_history = DeltaTableChatHistoryManager()
+    chat_history = SQLWarehouseChatHistoryManager()
     agent_service = AgentService()
 
 

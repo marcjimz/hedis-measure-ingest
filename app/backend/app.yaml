@@ -5,7 +5,7 @@ command:
 
 env:
   - name: MOCK_MODE
-    value: "false"
+    value: "true"
   - name: DEBUG
     value: "true"
   - name: CATALOG_NAME

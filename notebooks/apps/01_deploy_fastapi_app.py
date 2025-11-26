@@ -51,6 +51,7 @@ dbutils.widgets.text("schema_name", config.get("schema_name", "hedis_measurement
 dbutils.widgets.text("backend_app_name", config.get("backend_app_name", "hedis-chat-backend"), "Backend App Name")
 dbutils.widgets.text("frontend_app_name", config.get("frontend_app_name", "hedis-chat-frontend"), "Frontend App Name")
 dbutils.widgets.text("agent_endpoint", config.get("agent_endpoint", "hedis_chat_agent"), "Agent Endpoint Name")
+dbutils.widgets.text("sql_warehouse_id", config.get("sql_warehouse_id", ""), "SQL Warehouse ID")
 dbutils.widgets.dropdown("enable_auth", "Yes" if config.get("enable_auth", False) else "No", ["Yes", "No"], "Enable Authentication")
 dbutils.widgets.text("allowed_users", config.get("allowed_users", ""), "Allowed Users (comma-separated, empty = all)")
 
@@ -60,6 +61,7 @@ SCHEMA_NAME = dbutils.widgets.get("schema_name")
 BACKEND_APP_NAME = dbutils.widgets.get("backend_app_name")
 FRONTEND_APP_NAME = dbutils.widgets.get("frontend_app_name")
 AGENT_ENDPOINT = dbutils.widgets.get("agent_endpoint")
+SQL_WAREHOUSE_ID = dbutils.widgets.get("sql_warehouse_id")
 ENABLE_AUTH = dbutils.widgets.get("enable_auth") == "Yes"
 ALLOWED_USERS = [u.strip() for u in dbutils.widgets.get("allowed_users").split(",") if u.strip()]
 
@@ -74,6 +76,7 @@ print(f"   Schema: {SCHEMA_NAME}")
 print(f"   Backend App: {BACKEND_APP_NAME}")
 print(f"   Frontend App: {FRONTEND_APP_NAME}")
 print(f"   Agent Endpoint: {AGENT_ENDPOINT}")
+print(f"   SQL Warehouse: {SQL_WAREHOUSE_ID or 'Not configured (will use mock mode)'}")
 print(f"   Authentication: {ENABLE_AUTH}")
 print(f"   Current User: {CURRENT_USER}")
 if ALLOWED_USERS:
@@ -219,22 +222,30 @@ try:
     print(f"   Expected app.yaml at: {backend_workspace_path}/app.yaml")
 
     # Environment variables for backend - override app.yaml with config values
+    # Use SQL Warehouse for Delta table access (no PySpark needed)
+    mock_mode = "true" if not SQL_WAREHOUSE_ID else "false"
+
     backend_env = [
-        {"name": "MOCK_MODE", "value": "false"},
+        {"name": "MOCK_MODE", "value": mock_mode},
         {"name": "CATALOG_NAME", "value": CATALOG_NAME},
         {"name": "SCHEMA_NAME", "value": SCHEMA_NAME},
         {"name": "AGENT_ENDPOINT", "value": AGENT_ENDPOINT},
         {"name": "ENABLE_AUTH", "value": "true" if ENABLE_AUTH else "false"},
     ]
 
+    if SQL_WAREHOUSE_ID:
+        backend_env.append({"name": "SQL_WAREHOUSE_ID", "value": SQL_WAREHOUSE_ID})
+
     if ALLOWED_USERS:
         backend_env.append({"name": "ALLOWED_USERS", "value": ",".join(ALLOWED_USERS)})
 
     print(f"\n📋 Backend environment variables:")
-    print(f"   MOCK_MODE: false")
+    print(f"   MOCK_MODE: {mock_mode} {'(no SQL Warehouse configured)' if mock_mode == 'true' else '(using SQL Warehouse)'}")
     print(f"   CATALOG_NAME: {CATALOG_NAME}")
     print(f"   SCHEMA_NAME: {SCHEMA_NAME}")
     print(f"   AGENT_ENDPOINT: {AGENT_ENDPOINT}")
+    if SQL_WAREHOUSE_ID:
+        print(f"   SQL_WAREHOUSE_ID: {SQL_WAREHOUSE_ID}")
     print(f"   ENABLE_AUTH: {ENABLE_AUTH}")
     if ALLOWED_USERS:
         print(f"   ALLOWED_USERS: {','.join(ALLOWED_USERS)}")

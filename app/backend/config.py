@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     uc_catalog: str = "marcin_demo2"
     uc_schema: str = "hedis_measurements"
 
+    # SQL Warehouse (for Apps deployment)
+    sql_warehouse_id: Optional[str] = None  # SQL Warehouse ID for SQL execution
+
     # LLM
     llm_endpoint: str = "databricks-claude-sonnet-4-5"
 

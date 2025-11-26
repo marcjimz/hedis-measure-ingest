@@ -34,5 +34,12 @@ effective_year: "2025"  # Auto-detected if empty
 backend_app_name: "hedis-chat-backend"
 frontend_app_name: "hedis-chat-frontend"
 agent_endpoint: "hedis_chat_agent"
+
+# SQL Warehouse ID for backend Delta table access via SDK
+# Find ID in: SQL > SQL Warehouses > Click warehouse > Connection Details > Server hostname
+# Extract the warehouse ID from the path (format: /sql/1.0/warehouses/<warehouse_id>)
+# Leave empty to use mock mode (no real Delta tables)
+sql_warehouse_id: ""
+
 enable_auth: false
 allowed_users: ""  # Comma-separated list of allowed users, empty = all users allowed

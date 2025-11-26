@@ -1,14 +1,19 @@
 """
-Delta Table Chat History Manager
+SQL Warehouse Chat History Manager
 
-Concrete implementation using Databricks Delta tables for persistence.
-Uses PySpark to interact with Unity Catalog tables.
+Concrete implementation using Databricks SQL Warehouse for Delta table access.
+Uses Databricks SDK's Statement Execution API to interact with Unity Catalog tables.
+No PySpark dependency - works in Databricks Apps environment.
 """
 
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import logging
+import os
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.sql import StatementState
 
 from services.chat_history_manager import ChatHistoryManager
 from models.chat import (
@@ -34,9 +39,9 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-class DeltaTableChatHistoryManager(ChatHistoryManager):
+class SQLWarehouseChatHistoryManager(ChatHistoryManager):
     """
-    Chat history manager using Delta tables on Databricks.
+    Chat history manager using SQL Warehouse to access Delta tables on Databricks.
 
     Tables:
     - {catalog}.{schema}.{chats_table}: Chat sessions
@@ -90,13 +95,71 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
         self.messages_table = f"{self.catalog}.{self.schema}.{settings.messages_table}"
         self.reviews_table = f"{self.catalog}.{self.schema}.{settings.reviews_table}"
 
-        # Initialize Spark session
+        # Initialize Databricks workspace client and SQL warehouse
         try:
-            from pyspark.sql import SparkSession
-            self.spark = SparkSession.builder.getOrCreate()
-            logger.info(f"Initialized Delta table manager with catalog: {self.catalog}.{self.schema}")
+            # Get Databricks credentials from environment
+            host = os.environ.get("DATABRICKS_HOST") or settings.databricks_host
+            token = os.environ.get("DATABRICKS_TOKEN") or settings.databricks_token
+
+            if host and token:
+                self.w = WorkspaceClient(host=host, token=token)
+            else:
+                # In Databricks environment, SDK will use default auth
+                self.w = WorkspaceClient()
+
+            self.warehouse_id = settings.sql_warehouse_id
+            if not self.warehouse_id:
+                raise ValueError("SQL_WAREHOUSE_ID must be set for Delta table access")
+
+            logger.info(f"Initialized Delta table manager with SQL Warehouse: {self.warehouse_id}")
+            logger.info(f"Catalog: {self.catalog}.{self.schema}")
         except Exception as e:
-            logger.error(f"Failed to initialize Spark session: {e}")
+            logger.error(f"Failed to initialize SQL Warehouse client: {e}")
+            raise
+
+    def execute_sql(self, sql: str, wait_timeout: str = "30s") -> List[Dict[str, Any]]:
+        """
+        Execute SQL query against SQL Warehouse and return results.
+
+        Args:
+            sql: SQL query to execute
+            wait_timeout: Timeout for query execution (e.g., "30s", "5m")
+
+        Returns:
+            List of result rows as dictionaries
+        """
+        try:
+            logger.debug(f"Executing SQL: {sql[:200]}...")
+
+            # Execute SQL statement
+            response = self.w.statement_execution.execute_statement(
+                warehouse_id=self.warehouse_id,
+                statement=sql,
+                wait_timeout=wait_timeout
+            )
+
+            # Check if execution was successful
+            if response.status.state != StatementState.SUCCEEDED:
+                raise Exception(f"SQL execution failed: {response.status.state}")
+
+            # Parse results
+            results = []
+            if response.result and response.result.data_array:
+                # Get column names
+                columns = [col.name for col in response.manifest.schema.columns] if response.manifest else []
+
+                # Convert rows to dictionaries
+                for row in response.result.data_array:
+                    row_dict = {}
+                    for i, value in enumerate(row):
+                        col_name = columns[i] if i < len(columns) else f"col_{i}"
+                        row_dict[col_name] = value
+                    results.append(row_dict)
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Error executing SQL: {e}", exc_info=True)
             raise
 
     # ============================================================================
@@ -111,24 +174,26 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
     ) -> str:
         """Create a new chat session."""
         chat_id = str(uuid.uuid4())
-        now = datetime.utcnow()
+        now = datetime.utcnow().isoformat()
 
         try:
-            # Create DataFrame with chat data
-            data = [{
-                "id": chat_id,
-                "user_id": user_id,
-                "title": title,
-                "patient": patient,
-                "status": "active",
-                "created_at": now,
-                "updated_at": now,
-                "deleted": False
-            }]
+            patient_value = f"'{patient}'" if patient else "NULL"
+            sql = f"""
+                INSERT INTO {self.chats_table}
+                (id, user_id, title, patient, status, created_at, updated_at, deleted)
+                VALUES (
+                    '{chat_id}',
+                    '{user_id}',
+                    '{title}',
+                    {patient_value},
+                    'active',
+                    '{now}',
+                    '{now}',
+                    false
+                )
+            """
 
-            df = self.spark.createDataFrame(data)
-            df.write.format("delta").mode("append").saveAsTable(self.chats_table)
-
+            self.execute_sql(sql)
             logger.info(f"Created chat {chat_id} for user {user_id}")
             return chat_id
 
@@ -140,29 +205,31 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
         """Retrieve a complete chat with all messages."""
         try:
             # Get chat metadata
-            chat_df = self.spark.sql(f"""
+            sql = f"""
                 SELECT id, user_id, title, patient, status, created_at, updated_at
                 FROM {self.chats_table}
                 WHERE id = '{chat_id}' AND deleted = false
-            """)
+            """
 
-            if chat_df.count() == 0:
+            results = self.execute_sql(sql)
+
+            if not results:
                 return None
 
-            chat_row = chat_df.first()
+            chat_row = results[0]
 
             # Get messages
             messages = await self.get_chat_history(chat_id)
 
             return Chat(
-                id=chat_row.id,
-                userId=chat_row.user_id,
-                title=chat_row.title,
-                patient=chat_row.patient,
-                status=chat_row.status,
+                id=chat_row["id"],
+                userId=chat_row["user_id"],
+                title=chat_row["title"],
+                patient=chat_row.get("patient"),
+                status=chat_row["status"],
                 messages=messages,
-                createdAt=chat_row.created_at,
-                updatedAt=chat_row.updated_at
+                createdAt=chat_row["created_at"],
+                updatedAt=chat_row["updated_at"]
             )
 
         except Exception as e:
@@ -176,12 +243,13 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
     ) -> bool:
         """Update the status of a chat."""
         try:
-            now = datetime.utcnow()
-            self.spark.sql(f"""
+            now = datetime.utcnow().isoformat()
+            sql = f"""
                 UPDATE {self.chats_table}
                 SET status = '{status}', updated_at = '{now}'
                 WHERE id = '{chat_id}'
-            """)
+            """
+            self.execute_sql(sql)
             logger.info(f"Updated chat {chat_id} status to {status}")
             return True
 
@@ -342,22 +410,28 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
     ) -> str:
         """Save a message to a chat."""
         message_id = str(uuid.uuid4())
-        ts = timestamp or datetime.utcnow()
+        ts = (timestamp or datetime.utcnow()).isoformat()
 
         try:
-            data = [{
-                "id": message_id,
-                "chat_id": chat_id,
-                "role": role,
-                "content": content,
-                "timestamp": ts,
-                "name": None,
-                "tool_calls": None,
-                "tool_call_id": None
-            }]
+            # Escape single quotes in content
+            escaped_content = content.replace("'", "''")
 
-            df = self.spark.createDataFrame(data)
-            df.write.format("delta").mode("append").saveAsTable(self.messages_table)
+            sql = f"""
+                INSERT INTO {self.messages_table}
+                (id, chat_id, role, content, timestamp, name, tool_calls, tool_call_id)
+                VALUES (
+                    '{message_id}',
+                    '{chat_id}',
+                    '{role}',
+                    '{escaped_content}',
+                    '{ts}',
+                    NULL,
+                    NULL,
+                    NULL
+                )
+            """
+
+            self.execute_sql(sql)
 
             # Update chat timestamp
             await self.update_chat_status(chat_id, "active")
@@ -378,25 +452,27 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
         try:
             limit_clause = f"LIMIT {limit}" if limit else ""
 
-            messages_df = self.spark.sql(f"""
+            sql = f"""
                 SELECT id, role, content, timestamp, name, tool_calls, tool_call_id
                 FROM {self.messages_table}
                 WHERE chat_id = '{chat_id}'
                 ORDER BY timestamp ASC
                 {limit_clause}
-            """)
+            """
+
+            results = self.execute_sql(sql)
 
             messages = [
                 Message(
-                    id=row.id,
-                    role=row.role,
-                    content=row.content,
-                    timestamp=row.timestamp,
-                    name=row.name,
-                    tool_calls=row.tool_calls,
-                    tool_call_id=row.tool_call_id
+                    id=row["id"],
+                    role=row["role"],
+                    content=row["content"],
+                    timestamp=row["timestamp"],
+                    name=row.get("name"),
+                    tool_calls=row.get("tool_calls"),
+                    tool_call_id=row.get("tool_call_id")
                 )
-                for row in messages_df.collect()
+                for row in results
             ]
 
             return messages
@@ -656,10 +732,11 @@ class DeltaTableChatHistoryManager(ChatHistoryManager):
         }
 
     async def health_check(self) -> bool:
-        """Check if Delta tables are accessible."""
+        """Check if Delta tables are accessible via SQL Warehouse."""
         try:
             # Try to query the chats table
-            self.spark.sql(f"SELECT 1 FROM {self.chats_table} LIMIT 1")
+            sql = f"SELECT 1 FROM {self.chats_table} LIMIT 1"
+            self.execute_sql(sql)
             return True
         except Exception as e:
             logger.error(f"Health check failed: {e}", exc_info=True)

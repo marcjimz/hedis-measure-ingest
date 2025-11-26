@@ -32,7 +32,8 @@ class ChatHistoryManager(ABC):
     - User interactions
 
     Implementations can use different backends:
-    - DeltaTableChatHistoryManager: Uses Delta tables on Databricks
+    - SQLWarehouseChatHistoryManager: Uses SQL Warehouse API to access Delta tables
+    - MockChatHistoryManager: Uses in-memory storage for local development
     - PostgreSQLChatHistoryManager: Uses PostgreSQL/Lakebase
     - RedisChatHistoryManager: Uses Redis for fast access
     """
