@@ -14,10 +14,6 @@ env:
     value: "hedis_measurements"
   - name: AGENT_ENDPOINT
     value: "hedis_chat_agent"
-  - name: ENABLE_AUTH
-    value: "false"
-  - name: ALLOWED_USERS
-    value: ""
   - name: APP_NAME
     value: "HEDIS Chat API"
   - name: APP_VERSION

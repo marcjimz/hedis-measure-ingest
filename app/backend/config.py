@@ -66,14 +66,11 @@ class Settings(BaseSettings):
     postgres_instance: Optional[str] = None  # Lakebase instance name
     postgres_database: str = "databricks_postgres"
 
-    # Authentication (placeholder for future implementation)
-    auth_enabled: bool = False
-    jwt_secret: Optional[str] = None
-    jwt_algorithm: str = "HS256"
-    jwt_expiration_minutes: int = 60
+    # Note: Authentication is handled by Databricks Apps built-in auth
+    # All requests are automatically authenticated via workspace SSO
 
-    # Rate Limiting
-    rate_limit_enabled: bool = True
+    # Rate Limiting (optional - can be implemented with middleware)
+    rate_limit_enabled: bool = False
     rate_limit_requests: int = 1000
     rate_limit_window_seconds: int = 3600  # 1 hour
 

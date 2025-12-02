@@ -49,5 +49,5 @@ agent_endpoint: "hedis_chat_agent"
 # Note: Leave empty to use MOCK MODE (in-memory data, no real Delta tables)
 sql_warehouse_id: "148ccb90800933a1"
 
-enable_auth: false
-allowed_users: ""  # Comma-separated list of allowed users, empty = all users allowed
+# Note: Authentication is automatically handled by Databricks Apps built-in auth
+# All users accessing the app are authenticated via workspace SSO
