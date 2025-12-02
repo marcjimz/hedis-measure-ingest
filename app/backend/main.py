@@ -1,13 +1,12 @@
 """
 FastAPI Application Entry Point
 
-Main FastAPI application with CORS, middleware, and router configuration.
+Main FastAPI application with middleware and router configuration.
 Serves the HEDIS chat API backend.
 """
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import time
@@ -57,16 +56,6 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     lifespan=lifespan
-)
-
-
-# CORS Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=settings.cors_credentials,
-    allow_methods=settings.cors_methods,
-    allow_headers=settings.cors_headers,
 )
 
 

@@ -22,13 +22,5 @@ env:
     value: "2025"
   - name: HOST
     value: "0.0.0.0"
-  - name: CORS_ORIGINS
-    value: '["*"]'
-  - name: CORS_CREDENTIALS
-    value: "true"
-  - name: CORS_METHODS
-    value: '["*"]'
-  - name: CORS_HEADERS
-    value: '["*"]'
   - name: POSTGRES_ENABLED
     value: "false"
