@@ -607,7 +607,7 @@ print(f"✅ Monitoring view: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
 # MAGIC ### Frontend Can't Reach Backend
 # MAGIC
 # MAGIC 1. Verify backend is running and accessible
-# MAGIC 2. Test backend health: `{backend_url}/health`
+# MAGIC 2. Test backend health: `{backend_url}/api/health`
 # MAGIC 3. Verify `NEXT_PUBLIC_API_URL` environment variable in frontend deployment
 # MAGIC 4. Check both frontend and backend logs in Databricks Apps console
 # MAGIC 5. Ensure frontend makes direct API calls to the backend URL
