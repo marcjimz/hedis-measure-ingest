@@ -229,20 +229,22 @@ print("\n✅ Both apps are running and accessible\n")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🧪 Test Backend Health Endpoint
+# MAGIC ## 🧪 Test Backend API Access
 
 # COMMAND ----------
 
 print("="*80)
-print("TEST: Backend Health Endpoint")
+print("TEST: Backend API Access (via /api/chats)")
 print("="*80)
 
 print(f"\n📝 Using WorkspaceClient SDK authentication for app-to-app communication")
-print(f"   This notebook authenticates using Databricks Apps service principal")
+print(f"   Note: Databricks Apps require /api/* routes for programmatic access")
+print(f"   Testing /api/chats endpoint to verify backend is running")
 
 try:
-    # Access the health endpoint using SDK authentication
-    health_response = requests.get(f"{backend_url}/health", headers=app_headers, timeout=10, allow_redirects=False)
+    # Test /api/chats endpoint instead of /health
+    # Databricks Apps platform authentication requires /api/* routes
+    health_response = requests.get(f"{backend_url}/api/chats", headers=app_headers, timeout=10, allow_redirects=False)
 
     print(f"\nStatus Code: {health_response.status_code}")
     print(f"Content-Type: {health_response.headers.get('Content-Type', 'Not specified')}")
@@ -253,36 +255,54 @@ try:
         content_type = health_response.headers.get('Content-Type', '')
 
         try:
-            health_data = health_response.json()
-            print(f"\nHealth Response:")
-            print(json.dumps(health_data, indent=2))
+            api_data = health_response.json()
+            print(f"\nAPI Response (chats list):")
+            print(json.dumps(api_data, indent=2))
 
-            # Validate expected health response structure
-            if "status" in health_data:
-                print(f"\n✅ Health check successful")
-                log_test("Backend Health Check", True, health_data)
+            # Validate expected response structure for /api/chats
+            if "total" in api_data or "chats" in api_data:
+                print(f"\n✅ Backend API is accessible and responding correctly")
+                print(f"   Total chats: {api_data.get('total', 0)}")
+                log_test("Backend API Access", True, api_data)
             else:
-                error_msg = "Health response missing 'status' field"
-                log_test("Backend Health Check", False, health_data, error_msg)
+                error_msg = "API response missing expected fields (total or chats)"
+                log_test("Backend API Access", False, api_data, error_msg)
                 raise Exception(error_msg)
 
         except json.JSONDecodeError as e:
-            # Not JSON - this is an error with SDK authentication
+            # Not JSON - authentication likely failed
             print(f"\n❌ Response is not JSON!")
             print(f"Content-Type: {content_type}")
             print(f"Response Body (first 500 chars):")
             response_preview = health_response.text[:500]
             print(response_preview)
 
-            error_msg = "Health endpoint returned non-JSON response (authentication may have failed)"
+            error_msg = "API returned non-JSON response (authentication may have failed)"
             error_details = {
                 "status_code": health_response.status_code,
                 "content_type": content_type,
                 "response_preview": response_preview,
                 "json_decode_error": str(e)
             }
-            log_test("Backend Health Check", False, error_details, error_msg)
+            log_test("Backend API Access", False, error_details, error_msg)
             raise Exception(error_msg)
+    elif health_response.status_code in [301, 302, 303, 307, 308]:
+        # Still getting redirected - authentication not working
+        redirect_url = health_response.headers.get('Location', '')
+        print(f"\n❌ Still getting redirected to: {redirect_url}")
+        print(f"\nThis suggests the WorkspaceClient authentication is not sufficient.")
+        print(f"You may need to:")
+        print(f"   1. Grant 'CAN USE' permission to this user on the app")
+        print(f"   2. Ensure the app is configured to allow service principal access")
+        print(f"   3. Access the app via browser for full testing: {backend_url}/api/docs")
+
+        error_details = {
+            "status_code": health_response.status_code,
+            "redirect_url": redirect_url,
+            "headers": dict(health_response.headers)
+        }
+        log_test("Backend API Access", False, error_details, "Authentication redirect")
+        raise Exception("API still requires OAuth authentication - programmatic access not working")
     else:
         error_details = {
             "status_code": health_response.status_code,
@@ -291,15 +311,15 @@ try:
         }
         print(f"\nResponse Body: {health_response.text}")
         print(f"Response Headers: {dict(health_response.headers)}")
-        log_test("Backend Health Check", False, error_details, f"Status {health_response.status_code}")
-        raise Exception(f"Backend health check failed with status {health_response.status_code}")
+        log_test("Backend API Access", False, error_details, f"Status {health_response.status_code}")
+        raise Exception(f"Backend API access failed with status {health_response.status_code}")
 
 except requests.exceptions.Timeout:
-    log_test("Backend Health Check", False, None, "Request timed out")
-    raise Exception("Backend health check timed out - backend may not be ready")
+    log_test("Backend API Access", False, None, "Request timed out")
+    raise Exception("Backend API access timed out - backend may not be ready")
 except requests.exceptions.RequestException as e:
-    log_test("Backend Health Check", False, None, str(e))
-    raise Exception(f"Backend health check failed: {e}")
+    log_test("Backend API Access", False, None, str(e))
+    raise Exception(f"Backend API access failed: {e}")
 
 # COMMAND ----------
 
