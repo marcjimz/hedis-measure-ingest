@@ -48,12 +48,13 @@ api_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().ap
 headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
 base_url = f"https://{WORKSPACE_URL}/api/2.0"
 
-# Note: Databricks Apps require SSO authentication when accessed directly
-# For testing app endpoints, we'll use the workspace API token
-app_headers = {
-    "Authorization": f"Bearer {api_token}",
-    "Content-Type": "application/json"
-}
+# For app-to-app authentication, use WorkspaceClient's authenticate method
+# This provides the correct headers for programmatic access to Databricks Apps
+# Reference: https://docs.databricks.com/dev-tools/databricks-apps/connect-local
+app_headers = w.config.authenticate()
+# Ensure Content-Type is set for JSON requests
+if isinstance(app_headers, dict) and "Content-Type" not in app_headers:
+    app_headers["Content-Type"] = "application/json"
 
 # Create widgets for app names
 dbutils.widgets.text("backend_app_name", "hedis-chat-backend", "Backend App Name")
@@ -236,31 +237,18 @@ print("="*80)
 print("TEST: Backend Health Endpoint")
 print("="*80)
 
-print(f"\n📝 Note: Databricks Apps require browser SSO authentication.")
-print(f"   Testing will verify the app is deployed and accessible.")
-print(f"   For full API testing, access the app directly in browser:\n   {backend_url}/api/docs")
+print(f"\n📝 Using WorkspaceClient SDK authentication for app-to-app communication")
+print(f"   This notebook authenticates using Databricks Apps service principal")
 
 try:
-    # Try to access the health endpoint with API token
+    # Access the health endpoint using SDK authentication
     health_response = requests.get(f"{backend_url}/health", headers=app_headers, timeout=10, allow_redirects=False)
 
     print(f"\nStatus Code: {health_response.status_code}")
     print(f"Content-Type: {health_response.headers.get('Content-Type', 'Not specified')}")
 
-    # Apps may redirect to login - check for that
-    if health_response.status_code in [301, 302, 303, 307, 308]:
-        redirect_url = health_response.headers.get('Location', '')
-        print(f"\n⚠️  App redirected to: {redirect_url}")
-        print(f"   This is expected - Databricks Apps require browser-based SSO authentication")
-        print(f"   The app is deployed and running, but requires user login to access")
-        print(f"\n✅ App Deployment Status: RUNNING")
-        print(f"   To test the API: Open {backend_url}/api/docs in your browser")
-        log_test("Backend Health Check", True, {
-            "note": "App requires SSO authentication",
-            "app_url": backend_url,
-            "status": "deployed_and_running"
-        })
-    elif health_response.status_code == 200:
+    # With proper SDK authentication, we should get 200 responses
+    if health_response.status_code == 200:
         # Try to parse as JSON
         content_type = health_response.headers.get('Content-Type', '')
 
@@ -268,45 +256,33 @@ try:
             health_data = health_response.json()
             print(f"\nHealth Response:")
             print(json.dumps(health_data, indent=2))
-            log_test("Backend Health Check", True, health_data)
+
+            # Validate expected health response structure
+            if "status" in health_data:
+                print(f"\n✅ Health check successful")
+                log_test("Backend Health Check", True, health_data)
+            else:
+                error_msg = "Health response missing 'status' field"
+                log_test("Backend Health Check", False, health_data, error_msg)
+                raise Exception(error_msg)
+
         except json.JSONDecodeError as e:
-            # Not JSON - show what we got
-            print(f"\n⚠️  Response is not JSON!")
+            # Not JSON - this is an error with SDK authentication
+            print(f"\n❌ Response is not JSON!")
             print(f"Content-Type: {content_type}")
             print(f"Response Body (first 500 chars):")
             response_preview = health_response.text[:500]
             print(response_preview)
 
-            # Check if it's HTML (app may be returning login page)
-            if 'html' in content_type.lower() or health_response.text.strip().startswith('<'):
-                if 'sign in' in health_response.text.lower() or 'login' in health_response.text.lower():
-                    print(f"\n⚠️  App returned login page - requires browser SSO authentication")
-                    print(f"   The app is deployed and running")
-                    print(f"   To access: Open {backend_url} in your browser")
-                    log_test("Backend Health Check", True, {
-                        "note": "App requires SSO authentication",
-                        "app_url": backend_url,
-                        "status": "deployed_and_running"
-                    })
-                else:
-                    error_msg = "Health endpoint returned HTML instead of JSON"
-                    error_details = {
-                        "status_code": health_response.status_code,
-                        "content_type": content_type,
-                        "response_preview": response_preview
-                    }
-                    log_test("Backend Health Check", False, error_details, error_msg)
-                    raise Exception(error_msg)
-            else:
-                error_msg = f"Health endpoint returned non-JSON response"
-                error_details = {
-                    "status_code": health_response.status_code,
-                    "content_type": content_type,
-                    "response_preview": response_preview,
-                    "json_decode_error": str(e)
-                }
-                log_test("Backend Health Check", False, error_details, error_msg)
-                raise Exception(error_msg)
+            error_msg = "Health endpoint returned non-JSON response (authentication may have failed)"
+            error_details = {
+                "status_code": health_response.status_code,
+                "content_type": content_type,
+                "response_preview": response_preview,
+                "json_decode_error": str(e)
+            }
+            log_test("Backend Health Check", False, error_details, error_msg)
+            raise Exception(error_msg)
     else:
         error_details = {
             "status_code": health_response.status_code,
@@ -337,7 +313,7 @@ print("TEST: GET /api/chats")
 print("="*80)
 
 try:
-    chats_response = requests.get(f"{backend_url}/api/chats", timeout=10)
+    chats_response = requests.get(f"{backend_url}/api/chats", headers=app_headers, timeout=10)
 
     print(f"\nStatus Code: {chats_response.status_code}")
 
@@ -388,6 +364,7 @@ try:
 
     create_response = requests.post(
         f"{backend_url}/api/chats",
+        headers=app_headers,
         json=create_payload,
         timeout=10
     )
@@ -429,7 +406,7 @@ print(f"TEST: GET /api/chats/{created_chat_id}")
 print("="*80)
 
 try:
-    get_response = requests.get(f"{backend_url}/api/chats/{created_chat_id}", timeout=10)
+    get_response = requests.get(f"{backend_url}/api/chats/{created_chat_id}", headers=app_headers, timeout=10)
 
     print(f"\nStatus Code: {get_response.status_code}")
 
@@ -482,6 +459,7 @@ try:
 
     message_response = requests.post(
         f"{backend_url}/api/chat",
+        headers=app_headers,
         json=message_payload,
         timeout=60  # Longer timeout for AI response
     )
@@ -542,6 +520,7 @@ try:
 
     update_response = requests.put(
         f"{backend_url}/api/chats/{created_chat_id}",
+        headers=app_headers,
         json=update_payload,
         timeout=10
     )
@@ -580,7 +559,7 @@ print("TEST: GET /api/reviews")
 print("="*80)
 
 try:
-    reviews_response = requests.get(f"{backend_url}/api/reviews", timeout=10)
+    reviews_response = requests.get(f"{backend_url}/api/reviews", headers=app_headers, timeout=10)
 
     print(f"\nStatus Code: {reviews_response.status_code}")
 
@@ -620,7 +599,7 @@ print("TEST: GET /api/docs (OpenAPI Documentation)")
 print("="*80)
 
 try:
-    docs_response = requests.get(f"{backend_url}/api/docs", timeout=10)
+    docs_response = requests.get(f"{backend_url}/api/docs", headers=app_headers, timeout=10)
 
     print(f"\nStatus Code: {docs_response.status_code}")
 
