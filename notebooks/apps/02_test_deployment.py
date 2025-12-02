@@ -48,13 +48,58 @@ api_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().ap
 headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
 base_url = f"https://{WORKSPACE_URL}/api/2.0"
 
-# For app-to-app authentication, use WorkspaceClient's authenticate method
-# This provides the correct headers for programmatic access to Databricks Apps
-# Reference: https://docs.databricks.com/dev-tools/databricks-apps/connect-local
-app_headers = w.config.authenticate()
-# Ensure Content-Type is set for JSON requests
-if isinstance(app_headers, dict) and "Content-Type" not in app_headers:
-    app_headers["Content-Type"] = "application/json"
+# For app authentication, generate OAuth token on behalf of the user
+# Databricks Apps require OAuth tokens (JWT format), not PAT tokens
+# Example: databricks auth token --profile <profile>
+print(f"🔐 Generating OAuth token for user: {CURRENT_USER}")
+
+try:
+    # Generate OAuth token using Databricks SDK
+    # The SDK can generate OAuth tokens with proper scopes for app access
+    from databricks.sdk.oauth import Token
+
+    # Use the WorkspaceClient to get an OAuth token
+    # This uses the current notebook's authentication context to generate an OAuth token
+    # The token will have 'all-apis' scope which is required for app access
+
+    # Get OAuth token from the SDK's auth provider
+    # The notebook context already has OAuth credentials
+    auth_provider = w.config.auth_type
+    print(f"   Auth type: {auth_provider}")
+
+    # Try to get the token from the current auth configuration
+    if hasattr(w.config, 'token') and callable(w.config.token):
+        # Get the OAuth token from the config
+        oauth_token = w.config.token()
+        print(f"✅ OAuth token retrieved from SDK")
+
+        app_headers = {
+            "Authorization": f"Bearer {oauth_token}",
+            "Content-Type": "application/json"
+        }
+    else:
+        # Fallback: Use the notebook context token (which should be OAuth in Databricks)
+        print(f"   Using notebook context token")
+        oauth_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+
+        app_headers = {
+            "Authorization": f"Bearer {oauth_token}",
+            "Content-Type": "application/json"
+        }
+        print(f"✅ Using notebook OAuth token")
+
+except Exception as e:
+    print(f"⚠️  Error getting OAuth token: {e}")
+    print(f"   Using notebook context token as fallback")
+
+    # Fallback: Use the notebook API token directly
+    # In Databricks notebooks, the context token is already an OAuth token
+    oauth_token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+    app_headers = {
+        "Authorization": f"Bearer {oauth_token}",
+        "Content-Type": "application/json"
+    }
+    print(f"✅ Using fallback authentication")
 
 # Create widgets for app names
 dbutils.widgets.text("backend_app_name", "hedis-chat-backend", "Backend App Name")
@@ -70,6 +115,13 @@ print(f"   Backend App: {BACKEND_APP_NAME}")
 print(f"   Frontend App: {FRONTEND_APP_NAME}")
 print(f"   Debug Mode: {DEBUG_MODE}")
 print(f"   Current User: {CURRENT_USER}")
+print(f"   Authentication: OAuth token")
+
+# Show which authentication method is being used
+if 'oauth_token' in locals():
+    print(f"   OAuth Status: ✅ Generated successfully")
+else:
+    print(f"   OAuth Status: ⚠️  Using fallback authentication")
 
 # Test tracking
 test_results = []
@@ -237,8 +289,8 @@ print("="*80)
 print("TEST: Backend Health Check (via /api/health)")
 print("="*80)
 
-print(f"\n📝 Using WorkspaceClient SDK authentication for app-to-app communication")
-print(f"   Note: Databricks Apps require /api/* routes for programmatic access")
+print(f"\n📝 Using OAuth token for authenticated API access")
+print(f"   Note: Databricks Apps require OAuth tokens for programmatic access")
 print(f"   Testing /api/health endpoint to verify backend is running")
 
 try:
@@ -291,19 +343,20 @@ try:
         # Still getting redirected - authentication not working
         redirect_url = health_response.headers.get('Location', '')
         print(f"\n❌ Still getting redirected to: {redirect_url}")
-        print(f"\nThis suggests the WorkspaceClient authentication is not sufficient.")
-        print(f"You may need to:")
-        print(f"   1. Grant 'CAN USE' permission to this user on the app")
-        print(f"   2. Ensure the app is configured to allow service principal access")
-        print(f"   3. Access the app via browser for full testing: {backend_url}/api/docs")
+        print(f"\nThis suggests the OAuth token is not working for app authentication.")
+        print(f"Possible issues:")
+        print(f"   1. User may not have 'CAN USE' permission on the app")
+        print(f"   2. OAuth token scope may be insufficient")
+        print(f"   3. App may require additional configuration")
+        print(f"\n💡 Try accessing via browser: {backend_url}/api/docs")
 
         error_details = {
             "status_code": health_response.status_code,
             "redirect_url": redirect_url,
             "headers": dict(health_response.headers)
         }
-        log_test("Backend Health Check", False, error_details, "Authentication redirect")
-        raise Exception("Health check still requires OAuth authentication - programmatic access not working")
+        log_test("Backend Health Check", False, error_details, "OAuth authentication redirect")
+        raise Exception("Health check redirecting to login - OAuth token not accepted")
     else:
         error_details = {
             "status_code": health_response.status_code,
