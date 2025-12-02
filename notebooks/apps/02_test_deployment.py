@@ -117,15 +117,29 @@ if DEBUG_MODE:
 
 # Extract backend info - correct paths based on API structure
 backend_url = backend_info.get("url")
-backend_status_obj = backend_info.get("status", {})
-backend_state = backend_status_obj.get("state") if backend_status_obj else None
-backend_message = backend_status_obj.get("message", "") if backend_status_obj else ""
+
+# Try both possible status field names (API may use different field names)
+backend_status_obj = backend_info.get("app_status") or backend_info.get("status", {})
+if isinstance(backend_status_obj, dict):
+    backend_state = backend_status_obj.get("state")
+    backend_message = backend_status_obj.get("message", "")
+elif isinstance(backend_status_obj, str):
+    # Sometimes app_status is just a string
+    backend_state = backend_status_obj
+    backend_message = ""
+else:
+    backend_state = None
+    backend_message = ""
 
 # Validate we got the state
 if not backend_state:
     print(f"\n❌ FAILED: Could not retrieve backend state")
-    print(f"Status object: {backend_status_obj}")
+    print(f"app_status: {backend_info.get('app_status')}")
+    print(f"compute_status: {backend_info.get('compute_status')}")
     print(f"Full app info keys: {list(backend_info.keys())}")
+    if DEBUG_MODE:
+        print(f"\nFull response:")
+        print(json.dumps(backend_info, indent=2, default=str))
     raise Exception("Backend state not found in app info response")
 
 print(f"   URL: {backend_url}")
@@ -160,17 +174,31 @@ if DEBUG_MODE:
     print(f"\nDEBUG - Full Frontend App Response:")
     print(json.dumps(frontend_info, indent=2))
 
-# Extract frontend info
+# Extract frontend info - correct paths based on API structure
 frontend_url = frontend_info.get("url")
-frontend_status_obj = frontend_info.get("status", {})
-frontend_state = frontend_status_obj.get("state") if frontend_status_obj else None
-frontend_message = frontend_status_obj.get("message", "") if frontend_status_obj else ""
+
+# Try both possible status field names (API may use different field names)
+frontend_status_obj = frontend_info.get("app_status") or frontend_info.get("status", {})
+if isinstance(frontend_status_obj, dict):
+    frontend_state = frontend_status_obj.get("state")
+    frontend_message = frontend_status_obj.get("message", "")
+elif isinstance(frontend_status_obj, str):
+    # Sometimes app_status is just a string
+    frontend_state = frontend_status_obj
+    frontend_message = ""
+else:
+    frontend_state = None
+    frontend_message = ""
 
 # Validate we got the state
 if not frontend_state:
     print(f"\n❌ FAILED: Could not retrieve frontend state")
-    print(f"Status object: {frontend_status_obj}")
+    print(f"app_status: {frontend_info.get('app_status')}")
+    print(f"compute_status: {frontend_info.get('compute_status')}")
     print(f"Full app info keys: {list(frontend_info.keys())}")
+    if DEBUG_MODE:
+        print(f"\nFull response:")
+        print(json.dumps(frontend_info, indent=2, default=str))
     raise Exception("Frontend state not found in app info response")
 
 print(f"   URL: {frontend_url}")
