@@ -35,7 +35,7 @@
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from databricks.sdk import WorkspaceClient
 
 # Initialize workspace client
@@ -73,7 +73,7 @@ def log_test(test_name, passed, details=None, error=None):
         "passed": passed,
         "details": details,
         "error": error,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     test_results.append(result)
 
@@ -85,7 +85,7 @@ def log_test(test_name, passed, details=None, error=None):
             print(f"   Error: {error}")
         if details and DEBUG_MODE:
             print(f"   Debug Details:")
-            print(f"   {json.dumps(details, indent=2)}")
+            print(f"   {json.dumps(details, indent=2, default=str)}")
 
 # COMMAND ----------
 
@@ -233,12 +233,38 @@ try:
     health_response = requests.get(f"{backend_url}/health", timeout=10)
 
     print(f"\nStatus Code: {health_response.status_code}")
+    print(f"Content-Type: {health_response.headers.get('Content-Type', 'Not specified')}")
 
     if health_response.status_code == 200:
-        health_data = health_response.json()
-        print(f"\nHealth Response:")
-        print(json.dumps(health_data, indent=2))
-        log_test("Backend Health Check", True, health_data)
+        # Try to parse as JSON
+        content_type = health_response.headers.get('Content-Type', '')
+
+        try:
+            health_data = health_response.json()
+            print(f"\nHealth Response:")
+            print(json.dumps(health_data, indent=2))
+            log_test("Backend Health Check", True, health_data)
+        except json.JSONDecodeError as e:
+            # Not JSON - show what we got
+            print(f"\n⚠️  Response is not JSON!")
+            print(f"Content-Type: {content_type}")
+            print(f"Response Body (first 500 chars):")
+            print(health_response.text[:500])
+
+            # Check if it's HTML (common issue with reverse proxies/load balancers)
+            if 'html' in content_type.lower() or health_response.text.strip().startswith('<'):
+                error_msg = "Health endpoint returned HTML instead of JSON - check app routing/proxy configuration"
+            else:
+                error_msg = f"Health endpoint returned non-JSON response: {health_response.text[:100]}"
+
+            error_details = {
+                "status_code": health_response.status_code,
+                "content_type": content_type,
+                "response_preview": health_response.text[:500],
+                "json_decode_error": str(e)
+            }
+            log_test("Backend Health Check", False, error_details, error_msg)
+            raise Exception(error_msg)
     else:
         error_details = {
             "status_code": health_response.status_code,
