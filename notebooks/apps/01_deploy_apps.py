@@ -531,14 +531,14 @@ print(f"   👉 Access the application here: {frontend_url}")
 
 print(f"\n🔧 Architecture:")
 print(f"   User → Frontend ({frontend_url})")
-print(f"        ↓ (Direct API calls with CORS)")
+print(f"        ↓ (Direct API calls)")
 print(f"        → Backend ({backend_url})")
 print(f"        ↓")
 print(f"        → Databricks Resources")
 
 print(f"\n💡 How It Works:")
 print(f"   • Frontend serves the UI to users")
-print(f"   • Frontend makes direct API calls to backend (CORS enabled)")
+print(f"   • Frontend makes direct API calls to backend")
 print(f"   • Backend URL configured via NEXT_PUBLIC_API_URL environment variable")
 print(f"   • Backend handles all API logic and Databricks integration")
 print(f"   • Both apps scale independently")
@@ -608,10 +608,9 @@ print(f"✅ Monitoring view: {CATALOG_NAME}.{SCHEMA_NAME}.app_monitoring")
 # MAGIC
 # MAGIC 1. Verify backend is running and accessible
 # MAGIC 2. Test backend health: `{backend_url}/health`
-# MAGIC 3. Check CORS settings in `backend/main.py` (should allow all origins)
-# MAGIC 4. Verify `NEXT_PUBLIC_API_URL` environment variable in frontend deployment
-# MAGIC 5. Check both frontend and backend logs in Databricks Apps console
-# MAGIC 6. Ensure frontend makes direct API calls to the backend URL
+# MAGIC 3. Verify `NEXT_PUBLIC_API_URL` environment variable in frontend deployment
+# MAGIC 4. Check both frontend and backend logs in Databricks Apps console
+# MAGIC 5. Ensure frontend makes direct API calls to the backend URL
 # MAGIC
 # MAGIC ### Build Failures
 # MAGIC
