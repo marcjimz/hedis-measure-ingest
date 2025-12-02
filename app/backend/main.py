@@ -116,7 +116,9 @@ async def health_check():
         "version": settings.app_version,
         "catalog": f"{settings.uc_catalog}.{settings.uc_schema}",
         "effective_year": settings.effective_year,
-        "mode": "mock" if settings.mock_mode else "production"
+        "mode": "mock" if settings.mock_mode else "production",
+        "sql_warehouse_configured": bool(settings.sql_warehouse_id),
+        "sql_warehouse_id": settings.sql_warehouse_id[:8] + "..." if settings.sql_warehouse_id else None
     }
 
 
