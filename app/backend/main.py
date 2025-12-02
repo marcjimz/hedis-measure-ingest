@@ -95,8 +95,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Health check endpoint
-@app.get("/health", tags=["Health"])
+# Health check endpoint (under /api/ for Databricks Apps authentication)
+@app.get("/api/health", tags=["Health"])
 async def health_check():
     """Health check endpoint."""
     return {
@@ -111,7 +111,8 @@ async def health_check():
     }
 
 
-# Root endpoint
+# Root endpoint (under /api/ for Databricks Apps authentication)
+@app.get("/api", tags=["Root"])
 @app.get("/", tags=["Root"])
 async def root():
     """Root endpoint with API information."""
@@ -119,7 +120,7 @@ async def root():
         "app": settings.app_name,
         "version": settings.app_version,
         "docs": "/api/docs",
-        "health": "/health"
+        "health": "/api/health"
     }
 
 

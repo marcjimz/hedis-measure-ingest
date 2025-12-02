@@ -324,7 +324,7 @@ while elapsed_time < max_wait_time:
                     print(f"\n✅ Backend deployment SUCCEEDED!")
                     print(f"   App state: {app_state}")
                     print(f"   URL: {backend_url}")
-                    print(f"   Health: {backend_url}/health")
+                    print(f"   Health: {backend_url}/api/health")
                     print(f"   API Docs: {backend_url}/api/docs")
                     break
 
@@ -521,7 +521,7 @@ print("="*80)
 print(f"\n📍 Backend App (FastAPI API):")
 print(f"   Name: {BACKEND_APP_NAME}")
 print(f"   URL: {backend_url}")
-print(f"   Health: {backend_url}/health")
+print(f"   Health: {backend_url}/api/health")
 print(f"   API Docs: {backend_url}/api/docs")
 
 print(f"\n📍 Frontend App (Next.js UI):")
